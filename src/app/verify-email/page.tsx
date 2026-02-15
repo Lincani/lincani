@@ -1,12 +1,54 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 
 const ACCENT = "#4681f4";
 
+// Helps Next/Vercel avoid trying to pre-render this route as static
+export const dynamic = "force-dynamic";
+
 export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<Fallback />}>
+      <VerifyEmailInner />
+    </Suspense>
+  );
+}
+
+function Fallback() {
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        color: "white",
+        background: "linear-gradient(to bottom, #000, #0b0b0b 40%, #000)",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          borderRadius: 22,
+          padding: 22,
+          border: "1px solid rgba(255,255,255,0.10)",
+          background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))",
+          boxShadow: "0 18px 60px rgba(0,0,0,0.75)",
+        }}
+      >
+        <div style={{ fontWeight: 900 }}>BreedLink • Email Verification</div>
+        <div style={{ marginTop: 10, opacity: 0.85 }}>Loading…</div>
+      </div>
+    </main>
+  );
+}
+
+function VerifyEmailInner() {
   const router = useRouter();
   const search = useSearchParams();
 
@@ -25,19 +67,20 @@ export default function VerifyEmailPage() {
       }
 
       try {
-        const res = await fetch(`http://localhost:5000/auth/verify-email?token=${encodeURIComponent(token)}`);
-        const data = await res.json().catch(() => ({}));
+        const res = await fetch(
+          `http://localhost:5000/auth/verify-email?token=${encodeURIComponent(token)}`
+        );
+        const data = await res.json().catch(() => ({} as any));
 
-        if (!res.ok) throw new Error(data?.message || "Verification failed.");
+        if (!res.ok) throw new Error((data as any)?.message || "Verification failed.");
 
         if (cancelled) return;
         setStatus("success");
-setMessage("Email verified. Redirecting to login...");
+        setMessage("Email verified. Redirecting to login...");
 
-setTimeout(() => {
-  router.push("/login");
-}, 2000);
-
+        setTimeout(() => {
+          router.push("/login");
+        }, 2000);
       } catch (err: any) {
         if (cancelled) return;
         setStatus("error");
@@ -49,7 +92,7 @@ setTimeout(() => {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, router]);
 
   return (
     <main
@@ -107,14 +150,16 @@ setTimeout(() => {
           }}
         >
           <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 8 }}>
-            {status === "loading" ? "Working…" : status === "success" ? "Verified ✅" : "Verification failed"}
+            {status === "loading"
+              ? "Working…"
+              : status === "success"
+              ? "Verified ✅"
+              : "Verification failed"}
           </div>
 
           <div style={{ opacity: 0.85, lineHeight: 1.6 }}>{message}</div>
 
           <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
-            
-
             <button
               onClick={() => router.push("/")}
               style={{
