@@ -116,18 +116,29 @@ async function fetchMyPostsPage(token: string, cursor: string | null, limit = 10
   return { posts: cleaned, nextCursor: data.nextCursor ?? null };
 }
 
+// ✅ Vercel/SSR-safe localStorage reader
+function readLS<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  return safeJson(localStorage.getItem(key), fallback);
+}
+
 export default function ProfileHubPage() {
   const router = useRouter();
 
   const [authLoading, setAuthLoading] = useState(true);
-  const [me, setMe] = useState<MeUser | null>(() => getUser<MeUser>());
+
+  // ✅ FIX: do NOT call getUser() during initial render (SSR/prerender)
+  const [me, setMe] = useState<MeUser | null>(null);
 
   const [tab, setTab] = useState<Tab>("posts");
 
-  const [socials, setSocials] = useState<Socials>(() => safeJson(localStorage.getItem(LS_SOCIALS), {}));
+  // ✅ FIX: read localStorage safely
+  const [socials, setSocials] = useState<Socials>(() => readLS(LS_SOCIALS, {}));
 
   // ✅ posts shown on profile = the user’s community posts
-  const [posts, setPosts] = useState<MyPost[]>(() => safeJson(localStorage.getItem(LS_MY_POSTS), []));
+  // ✅ FIX: read localStorage safely
+  const [posts, setPosts] = useState<MyPost[]>(() => readLS(LS_MY_POSTS, []));
+
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -153,6 +164,11 @@ export default function ProfileHubPage() {
 
   // sentinel for infinite scroll
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ FIX: Load user ONLY after mount (browser)
+  useEffect(() => {
+    setMe(getUser<MeUser>());
+  }, []);
 
   // Protect + load /users/me
   useEffect(() => {
@@ -679,7 +695,12 @@ export default function ProfileHubPage() {
 
                       <div>
                         <div style={label}>X / Twitter</div>
-                        <input value={formX} onChange={(e) => setFormX(e.target.value)} style={input} placeholder="x.com/yourhandle" />
+                        <input
+                          value={formX}
+                          onChange={(e) => setFormX(e.target.value)}
+                          style={input}
+                          placeholder="x.com/yourhandle"
+                        />
                       </div>
                     </div>
                   </div>
@@ -898,7 +919,11 @@ export default function ProfileHubPage() {
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               <InsightBar label="Engagement rate" value={`${stats.engagement}%`} pct={Math.min(100, Math.round(stats.engagement * 4))} />
               <InsightBar label="Average views/post" value={String(stats.avgViews)} pct={Math.min(100, stats.avgViews)} />
-              <InsightBar label="Posting consistency" value={stats.totalPosts >= 5 ? "Strong" : stats.totalPosts >= 2 ? "Building" : "New"} pct={Math.min(100, stats.totalPosts * 18)} />
+              <InsightBar
+                label="Posting consistency"
+                value={stats.totalPosts >= 5 ? "Strong" : stats.totalPosts >= 2 ? "Building" : "New"}
+                pct={Math.min(100, stats.totalPosts * 18)}
+              />
             </div>
           </motion.div>
 
@@ -1099,7 +1124,16 @@ function InsightBar({ label, value, pct }: { label: string; value: string; pct: 
         <div style={{ opacity: 0.8, fontSize: 12 }}>{label}</div>
         <div style={{ fontWeight: 950 }}>{value}</div>
       </div>
-      <div style={{ marginTop: 10, height: 10, borderRadius: 999, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", overflow: "hidden" }}>
+      <div
+        style={{
+          marginTop: 10,
+          height: 10,
+          borderRadius: 999,
+          border: "1px solid rgba(255,255,255,0.10)",
+          background: "rgba(255,255,255,0.04)",
+          overflow: "hidden",
+        }}
+      >
         <div style={{ height: "100%", width: `${Math.max(0, Math.min(100, pct))}%`, background: "rgba(70,129,244,0.70)" }} />
       </div>
     </div>
