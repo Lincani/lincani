@@ -13,7 +13,17 @@ const { sendTestEmail } = require("./mailerResend");
 
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "https://lincani.com",
+      "https://www.lincani.com",
+      "http://localhost:3000",
+    ],
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
 // Serve uploaded media
