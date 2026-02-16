@@ -47,8 +47,11 @@ app.use(
   })
 );
 
-// Handle preflight for all routes
-app.options("*", cors());
+// ✅ Preflight handler (NO "*" route)
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
 app.use(express.json());
 
@@ -62,10 +65,10 @@ app.use("/posts", postRoutes);
 
 // Test route
 app.get("/", (req, res) => {
-  res.send("BreedLink server is running 🐶");
+  res.send("Lincani server is running 🐶");
 });
 
-// 👇 NEW — DEV email test endpoint
+// 👇 DEV email test endpoint
 app.post("/dev/test-email", async (req, res) => {
   try {
     const { to } = req.body || {};
@@ -117,6 +120,11 @@ app.get("/api/dogs", (req, res) => {
       imageUrl: "https://images.dog.ceo/breeds/husky/n02110185_1469.jpg",
     },
   ]);
+});
+
+// ✅ Safe 404 fallback (also avoids wildcard routes)
+app.use((req, res) => {
+  res.status(404).json({ message: "Route not found" });
 });
 
 app.listen(process.env.PORT || 5000, () => {
