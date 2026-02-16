@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clearSession, getSession, getToken, getUser } from "@/lib/auth";
+import { API_BASE } from "@/lib/api";
 
 const ACCENT = "#4681f4";
 
@@ -43,7 +44,7 @@ export default function ProfileEditPage() {
 
     (async () => {
       try {
-        const res = await fetch("http://localhost:5000/users/me", {
+        const res = await fetch(`${API_BASE}/users/me`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
@@ -101,7 +102,7 @@ export default function ProfileEditPage() {
     try {
       setSaving(true);
 
-      const res = await fetch("http://localhost:5000/users/me", {
+      const res = await fetch(`${API_BASE}/users/me`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -192,7 +193,12 @@ export default function ProfileEditPage() {
 
           <div style={{ ...card, padding: 18 }}>
             <Field label="Display name">
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g., Ruthless Kennels" style={input} />
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="e.g., Ruthless Kennels"
+                style={input}
+              />
             </Field>
 
             <Field label="Bio">
@@ -216,7 +222,11 @@ export default function ProfileEditPage() {
               <button onClick={onSave} disabled={saving} style={{ ...primaryBtn, opacity: saving ? 0.7 : 1 }}>
                 {saving ? "Saving…" : "Save changes"}
               </button>
-              <button onClick={() => router.replace("/profile")} disabled={saving} style={{ ...ghostBtn, opacity: saving ? 0.7 : 1 }}>
+              <button
+                onClick={() => router.replace("/profile")}
+                disabled={saving}
+                style={{ ...ghostBtn, opacity: saving ? 0.7 : 1 }}
+              >
                 Cancel
               </button>
             </div>

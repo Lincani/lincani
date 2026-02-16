@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getSession, setSession } from "@/lib/auth";
+import { API_BASE } from "@/lib/api";
 
 const ACCENT = "#4681f4";
 
@@ -41,7 +42,8 @@ export default function LoginGate() {
     setResendMsg(null);
 
     try {
-      const res = await fetch("http://localhost:5000/auth/resend-verification", {
+      const res = await fetch(`${API_BASE}/auth/resend-verification`, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -62,7 +64,8 @@ export default function LoginGate() {
     setResendMsg(null);
 
     try {
-      const res = await fetch("http://localhost:5000/auth/login", {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { clearSession, getSession, getToken, getUser } from "@/lib/auth";
+import { API_BASE } from "@/lib/api";
 
 const ACCENT = "#4681f4";
 
@@ -152,7 +153,7 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        const res = await fetch("http://localhost:5000/users/me", {
+        const res = await fetch(`${API_BASE}/users/me`, {
           method: "GET",
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -282,7 +283,7 @@ export default function DashboardPage() {
 
     setFeedLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/posts?limit=10`, {
+      const res = await fetch(`${API_BASE}/posts?limit=10`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
@@ -315,7 +316,7 @@ export default function DashboardPage() {
 
     setLoadingMore(true);
     try {
-      const url = `http://localhost:5000/posts?limit=10&cursor=${encodeURIComponent(feedCursor || "")}`;
+      const url = `${API_BASE}/posts?limit=10&cursor=${encodeURIComponent(feedCursor || "")}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
@@ -345,7 +346,7 @@ export default function DashboardPage() {
 
     setPosting(true);
     try {
-      const res = await fetch("http://localhost:5000/posts", {
+      const res = await fetch(`${API_BASE}/posts`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -364,8 +365,6 @@ export default function DashboardPage() {
 
       const data = (await res.json()) as { post: ApiFeedPost };
 
-      // The create endpoint returns just the post; it may not include author (depends on backend).
-      // We'll display as YOU instantly.
       const authorName = profile?.display_name?.trim()
         ? profile.display_name!
         : me?.username
@@ -388,10 +387,8 @@ export default function DashboardPage() {
       setPostLoc("");
       setPostTag("Litter Update");
 
-      // keep focus
       setTimeout(() => composerRef.current?.focus(), 50);
     } catch {
-      // If token died, bounce
       clearSession();
       localStorage.removeItem("breedlink_token");
       localStorage.removeItem("breedlink_user");
@@ -536,7 +533,15 @@ export default function DashboardPage() {
           </div>
 
           {/* Right */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 320, justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minWidth: 320,
+              justifyContent: "flex-end",
+            }}
+          >
             <button
               onClick={() => router.push("/")}
               style={{ ...ghostMini, width: 40, height: 40, borderRadius: 14, fontSize: 16 }}
@@ -666,7 +671,15 @@ export default function DashboardPage() {
                     }}
                   />
 
-                  <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      marginTop: 10,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
                     <select
                       value={postTag}
                       onChange={(e) => setPostTag(e.target.value as Post["tag"])}

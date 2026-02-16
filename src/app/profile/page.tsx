@@ -4,12 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { clearSession, getSession, getToken, getUser } from "@/lib/auth";
+import { API_BASE } from "@/lib/api";
+
 
 const ACCENT = "#4681f4";
-
-// ✅ Backend endpoint assumption (we can adjust to your actual route names)
-const API_BASE = "http://localhost:5000";
 const MY_POSTS_ENDPOINT = `${API_BASE}/posts/me`;
+
 
 type MeUser = {
   id: number;

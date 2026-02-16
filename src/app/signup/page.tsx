@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { API_BASE } from "@/lib/api"; // ✅ NEW: consistent API base
 
 const ACCENT = "#4681f4";
 const TERMS_VERSION = "2026-02-12";
@@ -62,7 +63,8 @@ export default function Signup() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:5000/auth/signup", {
+
+      const res = await fetch(`${API_BASE}/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -95,7 +97,8 @@ export default function Signup() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:5000/auth/resend-verification", {
+      // 
+      const res = await fetch(`${API_BASE}/auth/resend-verification`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),

@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
+import { API_BASE } from "@/lib/api"; // ✅ NEW
 
 const ACCENT = "#4681f4";
 
@@ -68,7 +69,7 @@ function VerifyEmailInner() {
 
       try {
         const res = await fetch(
-          `http://localhost:5000/auth/verify-email?token=${encodeURIComponent(token)}`
+          `${API_BASE}/auth/verify-email?token=${encodeURIComponent(token)}`
         );
         const data = await res.json().catch(() => ({} as any));
 
