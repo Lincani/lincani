@@ -20,7 +20,8 @@ function appUrl() {
 }
 
 async function sendVerifyEmail(toEmail, token) {
-  const verifyLink = `${appUrl()}/verify?token=${encodeURIComponent(token)}`;
+ const verifyLink = `${appUrl()}/verify?token=${encodeURIComponent(token)}`;
+ 
 
   try {
     const result = await resend.emails.send({
