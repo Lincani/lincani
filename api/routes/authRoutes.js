@@ -11,35 +11,46 @@ const normalize = (s) => String(s || "").trim().toLowerCase();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 function sender() {
-  return process.env.RESEND_FROM || "BreedLink <onboarding@resend.dev>";
+  // ✅ MUST be set in Render env now (you fixed this)
+  return process.env.RESEND_FROM || "Lincani <verify@lincani.com>";
 }
 function appUrl() {
-  return process.env.APP_URL || "http://localhost:3000";
+  // ✅ should be your real site
+  return (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
 }
 
-function sendVerifyEmail(toEmail, token) {
-  const verifyLink = `${appUrl()}/verify-email?token=${token}`;
+async function sendVerifyEmail(toEmail, token) {
+  const verifyLink = `${appUrl()}/verify?token=${encodeURIComponent(token)}`;
 
-  return resend.emails.send({
-    from: sender(),
-    to: [toEmail],
-    subject: "Verify your BreedLink email",
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height:1.6;">
-        <h2>Verify your email</h2>
-        <p>Thanks for signing up for BreedLink. Click the button below to verify your email.</p>
-        <p style="margin: 18px 0;">
-          <a href="${verifyLink}"
-             style="display:inline-block;padding:12px 16px;border-radius:12px;background:#4681f4;color:white;text-decoration:none;font-weight:700;">
-            Verify Email
-          </a>
-        </p>
-        <p style="color:#666;font-size:12px;">
-          This link expires in 24 hours. If you didn’t create this account, you can ignore this email.
-        </p>
-      </div>
-    `,
-  });
+  try {
+    const result = await resend.emails.send({
+      from: sender(),
+      to: [toEmail],
+      subject: "Verify your Lincani email",
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height:1.6;">
+          <h2>Verify your email</h2>
+          <p>Thanks for signing up for Lincani. Click the button below to verify your email.</p>
+          <p style="margin: 18px 0;">
+            <a href="${verifyLink}"
+               style="display:inline-block;padding:12px 16px;border-radius:12px;background:#4681f4;color:white;text-decoration:none;font-weight:700;">
+              Verify Email
+            </a>
+          </p>
+          <p style="color:#666;font-size:12px;">
+            This link expires in 24 hours. If you didn’t create this account, you can ignore this email.
+          </p>
+        </div>
+      `,
+    });
+
+    // Resend sometimes returns { data, error } style
+    if (result?.error) throw result.error;
+    return { ok: true };
+  } catch (err) {
+    console.error("RESEND_SEND_VERIFY_ERROR:", err);
+    return { ok: false, error: err };
+  }
 }
 
 /* ================= SIGNUP ================= */
@@ -76,17 +87,15 @@ router.post("/signup", async (req, res) => {
        VALUES (?, ?, ?, 0)`
     ).run(userId, token, expiresAt);
 
-    const result = await sendVerifyEmail(e, token);
-    if (result?.error) {
-      console.error("SIGNUP_EMAIL_ERROR:", result.error);
-      return res.status(500).json({
-        message: "Account created, but verification email failed. Try again later.",
-      });
-    }
+    // ✅ IMPORTANT: Do NOT fail signup if email sending fails
+    const mail = await sendVerifyEmail(e, token);
 
-    return res.json({
+    return res.status(201).json({
       ok: true,
-      message: "Signup successful. Please verify your email to continue.",
+      message: mail.ok
+        ? "Signup successful. Please verify your email to continue."
+        : "Account created, but verification email could not be sent. Use 'Resend verification' on the login screen.",
+      emailStatus: mail.ok ? "sent" : "failed",
     });
   } catch (err) {
     console.error("SIGNUP_ERROR:", err);
@@ -95,7 +104,11 @@ router.post("/signup", async (req, res) => {
 });
 
 /* ================= VERIFY EMAIL ================= */
-
+/**
+ * Your frontend Verify page calls:
+ *   `${API_BASE}/auth/verify-email?token=...`
+ * so this must be /verify-email (NOT /verify-email on the frontend route)
+ */
 router.get("/verify-email", (req, res) => {
   try {
     const token = String(req.query.token || "").trim();
@@ -126,7 +139,7 @@ router.get("/verify-email", (req, res) => {
   }
 });
 
-/* ================= RESEND VERIFICATION (PATCHED) ================= */
+/* ================= RESEND VERIFICATION ================= */
 
 router.post("/resend-verification", async (req, res) => {
   try {
@@ -135,10 +148,11 @@ router.post("/resend-verification", async (req, res) => {
 
     const user = db.prepare("SELECT id, email_verified FROM users WHERE email = ?").get(e);
 
+    // ✅ Always return 200 to avoid email enumeration
     if (!user) {
       return res.status(200).json({
         ok: true,
-        message: "If that email exists, we sent a link.",
+        message: "If that email exists, we sent a verification link.",
       });
     }
 
@@ -149,6 +163,7 @@ router.post("/resend-verification", async (req, res) => {
       });
     }
 
+    // Invalidate old tokens
     db.prepare(`UPDATE email_verification_tokens SET used = 1 WHERE user_id = ?`).run(user.id);
 
     const token = crypto.randomBytes(32).toString("hex");
@@ -159,16 +174,14 @@ router.post("/resend-verification", async (req, res) => {
        VALUES (?, ?, ?, 0)`
     ).run(user.id, token, expiresAt);
 
-    const result = await sendVerifyEmail(e, token);
+    const mail = await sendVerifyEmail(e, token);
 
-    if (result?.error) {
-      console.error("RESEND_VERIFY_RESEND_ERROR:", result.error);
-      return res.status(500).json({ message: "Failed to send verification email." });
-    }
-
-    return res.json({
+    return res.status(200).json({
       ok: true,
-      message: "Verification email resent. Check your inbox.",
+      message: mail.ok
+        ? "Verification email resent. Check your inbox."
+        : "We couldn’t send the email right now. Try again in a minute.",
+      emailStatus: mail.ok ? "sent" : "failed",
     });
   } catch (err) {
     console.error("RESEND_VERIFY_FATAL_ERROR:", err);
@@ -198,7 +211,7 @@ router.post("/login", async (req, res) => {
 
     if (!row.email_verified) {
       return res.status(403).json({
-        message: "Email not verified. Please check your inbox.",
+        message: "Email not verified. Please check your inbox or resend verification.",
       });
     }
 
