@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import { clearSession, getSession, getToken, getUser } from "@/lib/auth";
 import { API_BASE } from "@/lib/api";
 import { demoPosts, demoMarketplace } from "@/lib/demoSeed";
+import StoriesBar from "@/components/StoriesBar";
+
+
 
 const ACCENT = "#4681f4";
 
@@ -245,6 +248,7 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [tab, setTab] = useState<Tab>("community");
+  console.log("TAB VALUE:", tab);
   const [query, setQuery] = useState("");
 
   const [authLoading, setAuthLoading] = useState(true);
@@ -963,6 +967,15 @@ export default function DashboardPage() {
         body {
           overflow-x: hidden;
         }
+
+       /* Make native <select> dropdown options readable (dark theme) */
+select option,
+select optgroup {
+  background: #0e0f12 !important;
+  color: rgba(244,241,235,0.96) !important;
+}
+
+
         @media (max-width: 1100px) {
           .dashGrid {
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1218,6 +1231,10 @@ export default function DashboardPage() {
 
             <div style={{ ...divider, marginTop: 14 }} />
           </div>
+          <div style={{ marginBottom: 12 }}>
+  <StoriesBar />
+</div>
+
 
           {tab === "community" && (
             <motion.div
@@ -1282,11 +1299,37 @@ export default function DashboardPage() {
                   />
 
                   <div style={composerControls}>
-                    <select value={postTag} onChange={(e) => setPostTag(e.target.value as PostTag)} style={selectPill} disabled={posting}>
-                      {POST_TAGS.map((t) => (
-                        <option key={t}>{t}</option>
-                      ))}
-                    </select>
+                    <select
+  value={buildFeedFilterValue(viewMode, sortMode, tagFilter)}
+  onChange={(e) => {
+    const parsed = parseFeedFilterValue(e.target.value);
+    if (parsed.view) setViewMode(parsed.view);
+    if (parsed.sort) setSortMode(parsed.sort);
+    if (parsed.tag) setTagFilter(parsed.tag);
+  }}
+  style={selectPill}
+  disabled={posting}
+>
+  <optgroup label="View">
+    <option value={buildFeedFilterValue("All", sortMode, tagFilter)}>All posts</option>
+    <option value={buildFeedFilterValue("Saved", sortMode, tagFilter)}>Saved</option>
+  </optgroup>
+
+  <optgroup label="Sort">
+    <option value={buildFeedFilterValue(viewMode, "Newest", tagFilter)}>Newest</option>
+    <option value={buildFeedFilterValue(viewMode, "Popular", tagFilter)}>Popular</option>
+  </optgroup>
+
+  <optgroup label="Tags">
+    <option value={buildFeedFilterValue(viewMode, sortMode, "All")}>All tags</option>
+    {POST_TAGS.map((t) => (
+      <option key={t} value={buildFeedFilterValue(viewMode, sortMode, t)}>
+        {t}
+      </option>
+    ))}
+  </optgroup>
+</select>
+
 
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, minWidth: 260 }}>
                       <label
@@ -1533,6 +1576,25 @@ const POST_TAGS: PostTag[] = [
   "Resources",
 ];
 
+function buildFeedFilterValue(viewMode: "All" | "Saved", sortMode: "Newest" | "Popular", tagFilter: PostTag | "All") {
+  return `view:${viewMode}|sort:${sortMode}|tag:${tagFilter}`;
+}
+
+function parseFeedFilterValue(v: string): { view?: "All" | "Saved"; sort?: "Newest" | "Popular"; tag?: PostTag | "All" } {
+  const out: any = {};
+  const parts = (v || "").split("|");
+  for (const p of parts) {
+    const [k, raw] = p.split(":");
+    if (!k) continue;
+    const val = (raw || "").trim();
+    if (k === "view" && (val === "All" || val === "Saved")) out.view = val;
+    if (k === "sort" && (val === "Newest" || val === "Popular")) out.sort = val;
+    if (k === "tag") out.tag = val as any;
+  }
+  return out;
+}
+
+
 function FilterChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <motion.button
@@ -1658,7 +1720,6 @@ function DiscoverySidebar({
           <Avatar initials={initials} avatarUrl={null} online size={54} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 1000, letterSpacing: 0.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...premiumNameStyle(handle) }}>{name}</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: TEXT_MID }}>{handle}</div>
           </div>
         </div>
 
@@ -1855,8 +1916,21 @@ function PostCard({
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={postHeaderLine}>
-                <span style={{ ...postAuthor, ...premiumNameStyle(authorSeed) }}>{post.authorName}</span>
-                <span style={postHandle}>{post.authorHandle}</span>
+                <span
+  style={{
+    ...postAuthor,
+    ...premiumNameStyle(authorSeed),
+    cursor: clickable ? "pointer" : "default",
+  }}
+  onClick={() => {
+    if (!clickable || !post.authorUsername) return;
+    onVisitUser(post.authorUsername);
+  }}
+  title={clickable ? "Visit profile" : undefined}
+>
+  {post.authorName}
+</span>
+
                 <span style={postTime}>• {post.time}</span>
                 {post.location ? <span style={postLoc}>• {post.location}</span> : null}
               </div>
@@ -2098,21 +2172,7 @@ function Avatar({ initials, avatarUrl, online, size = 48 }: { initials: string; 
         initials
       )}
 
-      {typeof online === "boolean" && (
-        <span
-          style={{
-            position: "absolute",
-            right: 4,
-            bottom: 4,
-            width: dotSize,
-            height: dotSize,
-            borderRadius: 999,
-            background: online ? "#56F5A2" : "rgba(170,170,170,0.55)",
-            boxShadow: online ? "0 0 0 4px rgba(86,245,162,0.12)" : "0 0 0 4px rgba(255,255,255,0.06)",
-            border: "1px solid rgba(0,0,0,0.35)",
-          }}
-        />
-      )}
+      
     </div>
   );
 }
@@ -2503,15 +2563,22 @@ const composerControls: React.CSSProperties = {
 
 const selectPill: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.12)",
-  background: "rgba(255,255,255,0.02)",
+  background: "rgba(255,255,255,0.03)",
   color: TEXT_HIGH,
-  padding: "10px 12px",
+  padding: "10px 14px",
   borderRadius: 999,
   cursor: "pointer",
-  fontWeight: 900,
+  fontWeight: 950,
   outline: "none",
-  letterSpacing: 0.1,
+  letterSpacing: 0.12,
+  boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
+  backdropFilter: "blur(10px)",
+  WebkitAppearance: "none",
+  MozAppearance: "none",
+  appearance: "none",
 };
+
+
 
 const avatarShell: React.CSSProperties = {
   width: 48,
@@ -2551,7 +2618,13 @@ const postHeaderLine: React.CSSProperties = {
 };
 
 const postAuthor: React.CSSProperties = { fontWeight: 950, letterSpacing: 0.1 };
-const postHandle: React.CSSProperties = { color: TEXT_MID };
+const postHandle: React.CSSProperties = {
+  color: "rgba(214,208,200,0.65)",
+  fontSize: 13,
+  fontWeight: 600,
+  letterSpacing: 0.2,
+};
+
 const postTime: React.CSSProperties = { color: TEXT_MID, opacity: 0.7 };
 const postLoc: React.CSSProperties = { color: TEXT_MID, opacity: 0.65 };
 

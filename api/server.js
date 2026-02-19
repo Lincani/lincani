@@ -2,14 +2,14 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
+
 const adminRoutes = require("./routes/adminRoutes");
-
-
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const postRoutes = require("./routes/postRoutes");
+const storyRoutes = require("./routes/storyRoutes");
 
-// 👇 Email test helper
 const { sendTestEmail } = require("./mailerResend");
 
 const app = express();
@@ -28,21 +28,14 @@ const allowedOrigins = String(process.env.CORS_ORIGIN || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const originAllowlist = allowedOrigins.length
-  ? allowedOrigins
-  : fallbackOrigins;
+const originAllowlist = allowedOrigins.length ? allowedOrigins : fallbackOrigins;
 
 app.use(
   cors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
-
-      // allow Vercel preview deployments automatically
       if (origin.endsWith(".vercel.app")) return cb(null, true);
-
       if (originAllowlist.includes(origin)) return cb(null, true);
-
-      // don't throw error → prevents "Failed to fetch"
       return cb(null, false);
     },
     credentials: true,
@@ -60,18 +53,44 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 /* ===============================
-   Static uploads
+   STATIC UPLOADS FIX (IMPORTANT)
 ================================ */
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+const uploadsDir = path.resolve(process.cwd(), "uploads");
+console.log("UPLOADS DIR:", uploadsDir);
+
+app.use("/uploads", express.static(uploadsDir, { fallthrough: false }));
+
+app.get("/uploads-test", (req, res) => {
+  res.send("uploads route is alive");
+});
+
+app.get("/uploads-debug", (req, res) => {
+  try {
+    const files = fs.readdirSync(uploadsDir);
+    res.json({ uploadsDir, count: files.length, files });
+  } catch (e) {
+    res.status(500).json({
+      uploadsDir,
+      error: String(e?.message || e),
+    });
+  }
+});
 
 /* ===============================
-   Routes
+   DEBUG ROUTES
+================================ */
+app.get("/stories-ping", (req, res) => {
+  res.json({ ok: true, msg: "stories ping working" });
+});
+
+/* ===============================
+   API ROUTES
 ================================ */
 app.use("/auth", authRoutes);
 app.use("/users", userRoutes);
 app.use("/posts", postRoutes);
 app.use("/admin", adminRoutes);
-
+app.use("/stories", storyRoutes);
 
 app.get("/", (req, res) => {
   res.send("Lincani server running 🐶");
@@ -83,9 +102,7 @@ app.get("/", (req, res) => {
 app.post("/dev/test-email", async (req, res) => {
   try {
     const { to } = req.body || {};
-    if (!to) {
-      return res.status(400).json({ message: "Missing 'to' email" });
-    }
+    if (!to) return res.status(400).json({ message: "Missing 'to' email" });
 
     const data = await sendTestEmail(to);
     res.json({ ok: true, data });
@@ -98,7 +115,7 @@ app.post("/dev/test-email", async (req, res) => {
 });
 
 /* ===============================
-   Example Data Routes
+   EXAMPLE DATA ROUTES
 ================================ */
 app.get("/dogs", (req, res) => {
   res.json([
@@ -106,15 +123,13 @@ app.get("/dogs", (req, res) => {
       name: "Rocky",
       breed: "Husky",
       age: 3,
-      image:
-        "https://images.dog.ceo/breeds/husky/n02110185_1469.jpg",
+      image: "https://images.dog.ceo/breeds/husky/n02110185_1469.jpg",
     },
     {
       name: "Bella",
       breed: "Golden Retriever",
       age: 2,
-      image:
-        "https://images.dog.ceo/breeds/retriever-golden/n02099601_3004.jpg",
+      image: "https://images.dog.ceo/breeds/retriever-golden/n02099601_3004.jpg",
     },
   ]);
 });
@@ -145,18 +160,16 @@ app.get("/api/dogs", (req, res) => {
 });
 
 /* ===============================
-   Safe 404 (important)
+   SAFE 404
 ================================ */
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
 });
 
 /* ===============================
-   Start Server
+   START SERVER
 ================================ */
 app.listen(process.env.PORT || 5000, () => {
-  console.log(
-    `Server running on port ${process.env.PORT || 5000}`
-  );
+  console.log(`Server running on port ${process.env.PORT || 5000}`);
   console.log("CORS allowlist:", originAllowlist);
 });

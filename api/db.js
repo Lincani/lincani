@@ -27,6 +27,16 @@ try { db.exec(`ALTER TABLE users ADD COLUMN verified_account INTEGER DEFAULT 0`)
 try { db.exec(`ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0`); } catch {}
 try { db.exec(`ALTER TABLE users ADD COLUMN profile_completed INTEGER DEFAULT 0`); } catch {}
 
+// ✅ Enforce case-insensitive uniqueness for usernames + emails
+// This prevents: Daizeus vs daizeus (or any casing variant)
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(lower(username));`);
+} catch {}
+
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email));`);
+} catch {}
+
 // Email verification tokens table (REAL)
 db.exec(`
   CREATE TABLE IF NOT EXISTS email_verification_tokens (
@@ -76,5 +86,30 @@ db.exec(`
   ON posts(created_at DESC, id DESC)
 `);
 
+// -----------------------------
+// Stories table (Lincani Stories - 24h)
+// Supports:
+// - type='media' (image/video upload)
+// - type='post'  (share an existing post into a story)
+// -----------------------------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    type TEXT NOT NULL CHECK (type IN ('media','post')),
+    caption TEXT DEFAULT '',
+    media_type TEXT DEFAULT '',
+    media_url TEXT DEFAULT '',
+    post_id INTEGER,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_stories_active
+  ON stories(user_id, expires_at DESC, created_at DESC, id DESC)
+`);
 
 module.exports = db;
