@@ -6,10 +6,8 @@ import { useRouter } from "next/navigation";
 import { clearSession, getSession, getToken, getUser } from "@/lib/auth";
 import { API_BASE } from "@/lib/api";
 
-
 const ACCENT = "#4681f4";
 const MY_POSTS_ENDPOINT = `${API_BASE}/posts/me`;
-
 
 type MeUser = {
   id: number;
@@ -43,10 +41,11 @@ type MyPost = {
   location?: string;
   mediaUrl?: string;
 
-  views: number;
-  likes: number;
-  comments: number;
-  shares: number;
+  // ✅ backend may not send these yet — default to 0 in UI
+  views?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
 };
 
 type Tab = "posts";
@@ -93,6 +92,19 @@ function normalizeSocialUrl(raw: string) {
   return v;
 }
 
+function resolveMediaUrl(url?: string) {
+  const v = (url || "").trim();
+  if (!v) return "";
+  if (/^https?:\/\//i.test(v)) return v;
+  // relative like /uploads/...
+  const base = String(API_BASE || "").replace(/\/$/, "");
+  return `${base}${v.startsWith("/") ? "" : "/"}${v}`;
+}
+
+function isVideoUrl(url: string) {
+  return /\.(mp4|webm|mov|m4v)$/i.test(url);
+}
+
 async function fetchMyPostsPage(token: string, cursor: string | null, limit = 10) {
   const url = new URL(MY_POSTS_ENDPOINT);
   url.searchParams.set("limit", String(limit));
@@ -107,10 +119,14 @@ async function fetchMyPostsPage(token: string, cursor: string | null, limit = 10
   if (!res.ok) throw new Error("Failed to fetch posts");
   const data = (await res.json()) as { posts: MyPost[]; nextCursor: string | null };
 
-  // hard sanitize as it enters UI
+  // hard sanitize as it enters UI + ensure metrics exist
   const cleaned = (data.posts || []).map((p) => ({
     ...p,
     text: sanitizeText(p.text),
+    views: Number.isFinite(Number(p.views)) ? Number(p.views) : 0,
+    likes: Number.isFinite(Number(p.likes)) ? Number(p.likes) : 0,
+    comments: Number.isFinite(Number(p.comments)) ? Number(p.comments) : 0,
+    shares: Number.isFinite(Number(p.shares)) ? Number(p.shares) : 0,
   }));
 
   return { posts: cleaned, nextCursor: data.nextCursor ?? null };
@@ -328,10 +344,10 @@ export default function ProfileHubPage() {
       shares = 0;
 
     for (const p of posts) {
-      views += p.views;
-      likes += p.likes;
-      comments += p.comments;
-      shares += p.shares;
+      views += p.views ?? 0;
+      likes += p.likes ?? 0;
+      comments += p.comments ?? 0;
+      shares += p.shares ?? 0;
     }
 
     const engagement = views > 0 ? Math.round(((likes + comments + shares) / views) * 1000) / 10 : 0;
@@ -342,7 +358,7 @@ export default function ProfileHubPage() {
 
   const topPost = useMemo(() => {
     if (!posts.length) return null;
-    return [...posts].sort((a, b) => b.views - a.views)[0];
+    return [...posts].sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0];
   }, [posts]);
 
   const investorSignals = useMemo(() => {
@@ -749,7 +765,11 @@ export default function ProfileHubPage() {
           </motion.div>
 
           {profileCompletion.pct < 100 && (
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={{ ...card, marginTop: 12 }}>
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              style={{ ...card, marginTop: 12 }}
+            >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                 <div style={{ fontWeight: 950 }}>Profile completeness</div>
                 <div style={{ opacity: 0.7, fontSize: 12 }}>
@@ -821,32 +841,67 @@ export default function ProfileHubPage() {
                   <div style={{ opacity: 0.8 }}>No posts yet.</div>
                 </motion.div>
               ) : (
-                posts.map((p) => (
-                  <motion.div key={p.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={card}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                          <span style={tagBadge}>{p.tag}</span>
-                          <span style={{ opacity: 0.55, fontSize: 12 }}>{timeAgo(p.createdAt)}</span>
-                          {p.location ? <span style={{ opacity: 0.6, fontSize: 12 }}>• {p.location}</span> : null}
+                posts.map((p) => {
+                  const media = resolveMediaUrl(p.mediaUrl);
+                  const hasMedia = !!media;
+
+                  return (
+                    <motion.div key={p.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} style={card}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ minWidth: 0, width: "100%" }}>
+                          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={tagBadge}>{p.tag}</span>
+                            <span style={{ opacity: 0.55, fontSize: 12 }}>{timeAgo(p.createdAt)}</span>
+                            {p.location ? <span style={{ opacity: 0.6, fontSize: 12 }}>• {p.location}</span> : null}
+                          </div>
+
+                          <div style={{ marginTop: 10, opacity: 0.92, lineHeight: 1.55 }}>{sanitizeText(p.text)}</div>
+
+                          {/* ✅ Media (image/video) */}
+                          {hasMedia ? (
+                            <div
+                              style={{
+                                marginTop: 12,
+                                borderRadius: 18,
+                                overflow: "hidden",
+                                border: "1px solid rgba(255,255,255,0.10)",
+                                background: "rgba(0,0,0,0.25)",
+                                boxShadow: "0 14px 34px rgba(0,0,0,0.35)",
+                              }}
+                            >
+                              {isVideoUrl(media) ? (
+                                <video
+                                  src={media}
+                                  controls
+                                  playsInline
+                                  style={{ width: "100%", height: "auto", display: "block" }}
+                                />
+                              ) : (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={media}
+                                  alt="Post media"
+                                  style={{ width: "100%", height: "auto", display: "block", objectFit: "cover" }}
+                                />
+                              )}
+                            </div>
+                          ) : null}
+
+                          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                            <MiniStat label="Views" value={p.views ?? 0} />
+                            <MiniStat label="Likes" value={p.likes ?? 0} />
+                            <MiniStat label="Comments" value={p.comments ?? 0} />
+                            <MiniStat label="Shares" value={p.shares ?? 0} />
+                          </div>
                         </div>
 
-                        <div style={{ marginTop: 10, opacity: 0.92, lineHeight: 1.55 }}>{sanitizeText(p.text)}</div>
-
-                        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-                          <MiniStat label="Views" value={p.views} />
-                          <MiniStat label="Likes" value={p.likes} />
-                          <MiniStat label="Comments" value={p.comments} />
-                          <MiniStat label="Shares" value={p.shares} />
-                        </div>
+                        <button style={ghostMini} title="More" aria-label="More">
+                          ⋯
+                        </button>
                       </div>
-
-                      <button style={ghostMini} title="More" aria-label="More">
-                        ⋯
-                      </button>
-                    </div>
-                  </motion.div>
-                ))
+                    </motion.div>
+                  );
+                })
               )}
 
               {/* Infinite scroll sentinel */}

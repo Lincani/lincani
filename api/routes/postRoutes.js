@@ -48,10 +48,39 @@ function getMediaTypeFromMime(mime) {
   return null;
 }
 
-// ✅ POST /posts/upload  (upload images/videos FIRST)
-// Send as multipart/form-data:
-// - files (File)  <-- you can add multiple
-router.post("/upload", requireAuth, upload.array("files", 10), (req, res) => {
+function guessMediaTypeFromUrl(url) {
+  const u = String(url || "").toLowerCase().trim();
+  if (!u) return null;
+  if (u.endsWith(".mp4") || u.endsWith(".webm") || u.endsWith(".mov")) return "video";
+  if (u.endsWith(".png") || u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".webp") || u.endsWith(".gif"))
+    return "image";
+  return null;
+}
+
+// ✅ Accept absolute or relative; store relative "/uploads/..."
+function normalizeUploadsUrl(input) {
+  const u = String(input || "").trim();
+  if (!u) return "";
+
+  // Relative
+  if (u.startsWith("/uploads/")) return u;
+
+  // Absolute -> extract /uploads/...
+  if (u.startsWith("http://") || u.startsWith("https://")) {
+    const idx = u.indexOf("/uploads/");
+    if (idx === -1) return "";
+    return u.slice(idx);
+  }
+
+  return "";
+}
+
+function allowedTagsSet() {
+  return new Set(["Litter Update", "Stud Available", "Looking for match", "Health Test Results", "Advice"]);
+}
+
+// ✅ POST /posts/upload (PREMIUM: upload ONE file first)
+router.post("/upload", requireAuth, upload.array("files", 1), (req, res) => {
   try {
     const files = (req.files || []).map((f) => ({
       type: getMediaTypeFromMime(f.mimetype),
@@ -60,9 +89,9 @@ router.post("/upload", requireAuth, upload.array("files", 10), (req, res) => {
       size: f.size,
     }));
 
-    res.json({ files });
+    return res.json({ files });
   } catch (e) {
-    res.status(500).json({ error: "Upload failed" });
+    return res.status(500).json({ error: "Upload failed" });
   }
 });
 
@@ -108,9 +137,7 @@ router.get("/me", requireAuth, (req, res) => {
     const hasNext = rows.length > limit;
     const page = hasNext ? rows.slice(0, limit) : rows;
 
-    const nextCursor = hasNext
-      ? `${page[page.length - 1].created_at}:${page[page.length - 1].id}`
-      : null;
+    const nextCursor = hasNext ? `${page[page.length - 1].created_at}:${page[page.length - 1].id}` : null;
 
     const posts = page.map((p) => ({
       id: String(p.id),
@@ -119,41 +146,40 @@ router.get("/me", requireAuth, (req, res) => {
       tag: p.tag,
       location: p.location || undefined,
       mediaUrl: p.media_url || undefined,
-      mediaType: p.media_url ? null : null, // not used in /me right now
       views: Number(p.views || 0),
       likes: Number(p.likes || 0),
       comments: Number(p.comments || 0),
       shares: Number(p.shares || 0),
     }));
 
-    res.json({ posts, nextCursor });
+    return res.json({ posts, nextCursor });
   } catch (e) {
-    res.status(500).json({ error: "Failed to load posts" });
+    return res.status(500).json({ error: "Failed to load posts" });
   }
 });
 
-// ✅ POST /posts  (supports single photo/video upload)
-// Send as multipart/form-data:
-// - text (string)
-// - tag (string)
-// - location (string optional)
-// - media (file optional)
-router.post("/", requireAuth, upload.single("media"), (req, res) => {
+// ✅ POST /posts (Premium JSON OR multipart fallback)
+router.post("/", requireAuth, (req, res) => {
+  const ct = String(req.headers["content-type"] || "");
+
+  if (ct.includes("multipart/form-data")) {
+    return upload.single("media")(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload error" });
+      return handleCreatePost(req, res);
+    });
+  }
+
+  return handleCreatePost(req, res);
+});
+
+function handleCreatePost(req, res) {
   try {
     const userId = Number(req.user.id);
 
     const text = String(req.body?.text || "").trim();
     const tag = String(req.body?.tag || "").trim();
-    const location = String(req.body?.location || "").trim();
 
-    const allowedTags = new Set([
-      "Litter Update",
-      "Stud Available",
-      "Looking for match",
-      "Health Test Results",
-      "Advice",
-    ]);
-
+    const allowedTags = allowedTagsSet();
     if (!text) return res.status(400).json({ error: "Text is required" });
     if (!allowedTags.has(tag)) return res.status(400).json({ error: "Invalid tag" });
 
@@ -162,10 +188,27 @@ router.post("/", requireAuth, upload.single("media"), (req, res) => {
     let mediaUrl = "";
     let mediaType = null;
 
+    // --- JSON premium flow ---
+    const incomingMediaUrl = typeof req.body?.mediaUrl === "string" ? req.body.mediaUrl : "";
+
+    if (incomingMediaUrl) {
+      mediaUrl = normalizeUploadsUrl(incomingMediaUrl);
+      mediaType = mediaUrl ? guessMediaTypeFromUrl(mediaUrl) : null;
+
+      if (!mediaUrl) {
+        return res.status(400).json({
+          error: "Invalid mediaUrl. Must be /uploads/... or an absolute URL containing /uploads/...",
+        });
+      }
+    }
+
+    // --- Multipart fallback ---
     if (req.file) {
       mediaUrl = `/uploads/${req.file.filename}`;
       mediaType = getMediaTypeFromMime(req.file.mimetype);
     }
+
+    const location = ""; // omitted for premium flow
 
     const info = db
       .prepare(
@@ -176,27 +219,65 @@ router.post("/", requireAuth, upload.single("media"), (req, res) => {
       )
       .run(userId, text, tag, location, mediaUrl, createdAt);
 
-    const newPost = {
-      id: String(info.lastInsertRowid),
-      createdAt,
-      text,
-      tag,
-      location: location || undefined,
-      mediaUrl: mediaUrl || undefined,
-      mediaType, // "image" | "video" | null
-      views: 0,
-      likes: 0,
-      comments: 0,
-      shares: 0,
-    };
-
-    res.status(201).json({ post: newPost });
+    return res.status(201).json({
+      post: {
+        id: String(info.lastInsertRowid),
+        createdAt,
+        text,
+        tag,
+        location: undefined,
+        mediaUrl: mediaUrl || undefined,
+        mediaType,
+        views: 0,
+        likes: 0,
+        comments: 0,
+        shares: 0,
+      },
+    });
   } catch (e) {
-    res.status(500).json({ error: "Failed to create post" });
+    return res.status(500).json({ error: "Failed to create post" });
+  }
+}
+
+/* ===========================
+   ✅ NEW: DELETE /posts/:id
+   Owner-only + best-effort file cleanup
+   =========================== */
+router.delete("/:id", requireAuth, (req, res) => {
+  try {
+    const userId = Number(req.user.id);
+    const postId = Number(req.params.id);
+
+    if (!Number.isFinite(postId)) return res.status(400).json({ error: "Invalid post id" });
+
+    const row = db.prepare(`SELECT id, user_id, media_url FROM posts WHERE id = ?`).get(postId);
+
+    if (!row) return res.status(404).json({ error: "Post not found" });
+    if (Number(row.user_id) !== userId) return res.status(403).json({ error: "Not allowed" });
+
+    // delete file if it’s in /uploads
+    const mediaUrl = String(row.media_url || "");
+    if (mediaUrl.startsWith("/uploads/")) {
+      const filename = mediaUrl.replace("/uploads/", "").trim();
+      if (filename) {
+        const filePath = path.join(uploadDir, filename);
+        try {
+          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        } catch {
+          // ignore file deletion errors
+        }
+      }
+    }
+
+    db.prepare(`DELETE FROM posts WHERE id = ?`).run(postId);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: "Failed to delete post" });
   }
 });
 
-// ✅ GET /posts (Community feed: all posts, infinite scroll)
+// ✅ GET /posts (Community feed)
 router.get("/", requireAuth, (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit || "10", 10), 30);
@@ -241,9 +322,7 @@ router.get("/", requireAuth, (req, res) => {
     const hasNext = rows.length > limit;
     const page = hasNext ? rows.slice(0, limit) : rows;
 
-    const nextCursor = hasNext
-      ? `${page[page.length - 1].created_at}:${page[page.length - 1].id}`
-      : null;
+    const nextCursor = hasNext ? `${page[page.length - 1].created_at}:${page[page.length - 1].id}` : null;
 
     const posts = page.map((p) => ({
       id: String(p.id),
@@ -256,7 +335,6 @@ router.get("/", requireAuth, (req, res) => {
       likes: Number(p.likes || 0),
       comments: Number(p.comments || 0),
       shares: Number(p.shares || 0),
-
       author: {
         id: Number(p.user_id),
         username: p.username,
@@ -266,9 +344,9 @@ router.get("/", requireAuth, (req, res) => {
       },
     }));
 
-    res.json({ posts, nextCursor });
+    return res.json({ posts, nextCursor });
   } catch (e) {
-    res.status(500).json({ error: "Failed to load feed" });
+    return res.status(500).json({ error: "Failed to load feed" });
   }
 });
 
