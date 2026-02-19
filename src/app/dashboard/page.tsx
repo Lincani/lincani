@@ -1,24 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { clearSession, getSession, getToken, getUser } from "@/lib/auth";
 import { API_BASE } from "@/lib/api";
+import { demoPosts, demoMarketplace } from "@/lib/demoSeed";
 
 const ACCENT = "#4681f4";
 
-type Tab = "community" | "marketplace";
+/* -------------------------------- Types -------------------------------- */
+
+type Tab = "community" | "network";
+
+type PostTag =
+  | "Announcement"
+  | "Litter Update"
+  | "Program Update"
+  | "Breeding Advice"
+  | "Health Testing"
+  | "Stud Available"
+  | "Looking for Match"
+  | "Mentorship"
+  | "Success Story"
+  | "Question"
+  | "Event / Meetup"
+  | "Resources";
 
 type Post = {
   id: string;
-  authorId?: number; // ✅ for delete permission
+  authorId?: number;
   authorName: string;
   authorHandle: string;
-  authorUsername?: string; // ✅ NEW: for profile navigation
-  authorAvatarUrl?: string | null; // ✅ NEW: show avatar images
+  authorUsername?: string;
+  authorAvatarUrl?: string | null;
   location?: string;
-  tag: "Litter Update" | "Stud Available" | "Looking for match" | "Health Test Results" | "Advice";
+  tag: PostTag;
   time: string;
   text: string;
   media?: { type: "image" | "video"; url: string }[];
@@ -50,7 +67,7 @@ type ApiFeedPost = {
   id: string;
   createdAt: number;
   text: string;
-  tag: Post["tag"];
+  tag: PostTag;
   location?: string;
   mediaUrl?: string;
   views: number;
@@ -69,6 +86,23 @@ type ApiFeedPost = {
 type UploadResponse = {
   files: { url: string; type: string; name: string; size: number }[];
 };
+
+type Toast = {
+  id: string;
+  type: "success" | "error" | "info";
+  title: string;
+  msg?: string;
+};
+
+/* ------------------------------ Helpers -------------------------------- */
+
+function uid(prefix = "id") {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+}
+
+function pid(id: string | number) {
+  return String(id);
+}
 
 function timeAgo(ts: number) {
   const sec = Math.floor((Date.now() - ts) / 1000);
@@ -117,11 +151,108 @@ function isVideoFile(file: File | null) {
   return (file.type || "").startsWith("video/");
 }
 
+function safeJsonParse<T>(raw: string | null, fallback: T): T {
+  try {
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeForSearch(s: string) {
+  return (s || "").toLowerCase().trim();
+}
+
+function fmtCount(n: number) {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`;
+  return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}m`;
+}
+
+function commentLikeKey(postId: string, commentId: string) {
+  return `${postId}:${commentId}`;
+}
+
+/* ---------------------- Premium username styling ----------------------- */
+
+const PREMIUM_GRADIENTS = [
+  // ice/silver
+  "linear-gradient(90deg, rgba(245,246,255,0.95), rgba(186,203,255,0.95))",
+  // champagne/gold (subtle)
+  "linear-gradient(90deg, rgba(255,244,214,0.95), rgba(201,179,126,0.95))",
+  // sapphire
+  "linear-gradient(90deg, rgba(166,205,255,0.95), rgba(70,129,244,0.95))",
+  // violet
+  "linear-gradient(90deg, rgba(219,203,255,0.95), rgba(156,122,255,0.95))",
+  // mint
+  "linear-gradient(90deg, rgba(184,255,232,0.95), rgba(86,245,162,0.95))",
+  // rose (very muted)
+  "linear-gradient(90deg, rgba(255,219,232,0.92), rgba(255,160,198,0.92))",
+] as const;
+
+function hashStr(input: string) {
+  const s = (input || "").trim();
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) || 0;
+}
+
+function premiumNameStyle(seed: string): React.CSSProperties {
+  const idx = hashStr(seed) % PREMIUM_GRADIENTS.length;
+  return {
+    backgroundImage: PREMIUM_GRADIENTS[idx],
+    WebkitBackgroundClip: "text",
+    backgroundClip: "text",
+    color: "transparent",
+    textShadow: "0 10px 26px rgba(70,129,244,0.10)",
+  };
+}
+
+/* ----------------------------- Local Store ----------------------------- */
+
+const LS = {
+  draft: "lincani_draft_v2",
+  likes: "lincani_likes_v2",
+  saves: "lincani_saves_v2",
+  comments: "lincani_comments_v2",
+  shares: "lincani_shares_v2",
+  commentLikes: "lincani_comment_likes_v2",
+};
+
+type LikeMap = Record<string, boolean>;
+type SaveMap = Record<string, boolean>;
+type ShareMap = Record<string, number>;
+type CommentLikeMap = Record<string, boolean>;
+
+type Comment = {
+  id: string;
+  postId: string;
+  author: string;
+  text: string;
+  createdAt: number;
+  likes: number;
+};
+
+type CommentMap = Record<string, Comment[]>;
+
+/* -------------------------------- Page -------------------------------- */
+
 export default function DashboardPage() {
   const router = useRouter();
 
   const [tab, setTab] = useState<Tab>("community");
   const [query, setQuery] = useState("");
+
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authed, setAuthed] = useState<boolean>(() => {
+    const s = getSession();
+    const t = getToken();
+    return !!s && !!t;
+  });
 
   const [me, setMe] = useState<ApiMeResponse["user"] | null>(() => {
     const u = getUser<ApiMeResponse["user"]>();
@@ -129,6 +260,7 @@ export default function DashboardPage() {
   });
 
   const [profile, setProfile] = useState<PublicProfile | null>(() => {
+    if (typeof window === "undefined") return null;
     try {
       const raw = localStorage.getItem("breedlink_user");
       if (!raw) return null;
@@ -146,8 +278,6 @@ export default function DashboardPage() {
     }
   });
 
-  const [authLoading, setAuthLoading] = useState(true);
-
   const [posts, setPosts] = useState<Post[]>([]);
   const [feedLoading, setFeedLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -157,14 +287,121 @@ export default function DashboardPage() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [postText, setPostText] = useState("");
-  const [postTag, setPostTag] = useState<Post["tag"]>("Litter Update");
+  const [postText, setPostText] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return safeJsonParse<{ text: string; tag: PostTag }>(localStorage.getItem(LS.draft), {
+      text: "",
+      tag: "Announcement",
+    }).text;
+  });
+
+  const [postTag, setPostTag] = useState<PostTag>(() => {
+    if (typeof window === "undefined") return "Announcement";
+    return safeJsonParse<{ text: string; tag: PostTag }>(localStorage.getItem(LS.draft), {
+      text: "",
+      tag: "Announcement",
+    }).tag;
+  });
+
   const [posting, setPosting] = useState(false);
 
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string>("");
 
   const [showTop, setShowTop] = useState(false);
+
+  const [likes, setLikes] = useState<LikeMap>(() => {
+    if (typeof window === "undefined") return {};
+    return safeJsonParse<LikeMap>(localStorage.getItem(LS.likes), {});
+  });
+  const [saves, setSaves] = useState<SaveMap>(() => {
+    if (typeof window === "undefined") return {};
+    return safeJsonParse<SaveMap>(localStorage.getItem(LS.saves), {});
+  });
+  const [comments, setComments] = useState<CommentMap>(() => {
+    if (typeof window === "undefined") return {};
+    return safeJsonParse<CommentMap>(localStorage.getItem(LS.comments), {});
+  });
+  const [commentLikes, setCommentLikes] = useState<CommentLikeMap>(() => {
+    if (typeof window === "undefined") return {};
+    return safeJsonParse<CommentLikeMap>(localStorage.getItem(LS.commentLikes), {});
+  });
+  const [shares, setShares] = useState<ShareMap>(() => {
+    if (typeof window === "undefined") return {};
+    return safeJsonParse<ShareMap>(localStorage.getItem(LS.shares), {});
+  });
+
+  const [tagFilter, setTagFilter] = useState<PostTag | "All">("All");
+  const [viewMode, setViewMode] = useState<"All" | "Saved">("All");
+  const [sortMode, setSortMode] = useState<"Newest" | "Popular">("Newest");
+
+  const [openCommentsMap, setOpenCommentsMap] = useState<Record<string, boolean>>({});
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  function toast(t: Omit<Toast, "id">) {
+    const id = uid("toast");
+    setToasts((p) => [...p, { ...t, id }]);
+    setTimeout(() => {
+      setToasts((p) => p.filter((x) => x.id !== id));
+    }, 2600);
+  }
+
+  const [lightbox, setLightbox] = useState<{
+    open: boolean;
+    type: "image" | "video";
+    url: string;
+    title?: string;
+  } | null>(null);
+
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ prevents “double-like” on comment clicks (rapid duplicate events / edge-case bubbling)
+  const commentLikeGuardRef = useRef<Record<string, number>>({});
+
+  /* ------------------------- Persist local maps ------------------------- */
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS.likes, JSON.stringify(likes));
+    } catch {}
+  }, [likes]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS.saves, JSON.stringify(saves));
+    } catch {}
+  }, [saves]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS.comments, JSON.stringify(comments));
+    } catch {}
+  }, [comments]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS.commentLikes, JSON.stringify(commentLikes));
+    } catch {}
+  }, [commentLikes]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS.shares, JSON.stringify(shares));
+    } catch {}
+  }, [shares]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(LS.draft, JSON.stringify({ text: postText, tag: postTag }));
+    } catch {}
+  }, [postText, postTag]);
 
   useEffect(() => {
     if (!mediaFile) {
@@ -176,20 +413,20 @@ export default function DashboardPage() {
     return () => URL.revokeObjectURL(url);
   }, [mediaFile]);
 
-  const subtitle = useMemo(() => {
-    // ✅ Removed subtitle to reduce clutter
-    return "";
-  }, []);
+  /* ------------------------------ Auth load ----------------------------- */
 
   useEffect(() => {
     const s = getSession();
     const token = getToken();
 
     if (!s || !token) {
+      setAuthed(false);
       setAuthLoading(false);
       router.replace("/login");
       return;
     }
+
+    setAuthed(true);
 
     let cancelled = false;
 
@@ -223,9 +460,14 @@ export default function DashboardPage() {
         });
       } catch {
         clearSession();
-        localStorage.removeItem("breedlink_token");
-        localStorage.removeItem("breedlink_user");
-        if (!cancelled) router.replace("/login");
+        try {
+          localStorage.removeItem("breedlink_token");
+          localStorage.removeItem("breedlink_user");
+        } catch {}
+        if (!cancelled) {
+          setAuthed(false);
+          router.replace("/login");
+        }
       } finally {
         if (!cancelled) setAuthLoading(false);
       }
@@ -280,21 +522,19 @@ export default function DashboardPage() {
 
   const uiBio = useMemo(() => {
     const bio = profile?.bio?.trim();
-    return bio ? bio : "Health-first matches • Responsible breeding";
+    return bio ? bio : "Breeder networking • Health-first programs • Transparency";
   }, [profile]);
-
-  const myAvatarUrl = useMemo(() => {
-    const raw = profile?.avatar_url ?? me?.avatar_url ?? null;
-    if (!raw?.trim()) return null;
-    return toAbsoluteMediaUrl(raw);
-  }, [profile?.avatar_url, me?.avatar_url]);
 
   function logout() {
     clearSession();
-    localStorage.removeItem("breedlink_token");
-    localStorage.removeItem("breedlink_user");
+    try {
+      localStorage.removeItem("breedlink_token");
+      localStorage.removeItem("breedlink_user");
+    } catch {}
     router.replace("/");
   }
+
+  /* ------------------------------ Feed API ------------------------------ */
 
   function mapApiToUi(p: ApiFeedPost): Post {
     const authorName = p.author?.display_name?.trim()
@@ -304,14 +544,11 @@ export default function DashboardPage() {
       : "Lincani User";
 
     const authorHandle = p.author?.username ? `@${p.author.username}` : "@lincani";
-
     const mu = toAbsoluteMediaUrl(p.mediaUrl || "");
-    const hasMedia = !!mu;
-
     const avatarAbs = p.author?.avatar_url?.trim() ? toAbsoluteMediaUrl(p.author.avatar_url) : null;
 
     return {
-      id: p.id,
+      id: pid(p.id),
       authorId: p.author?.id,
       authorName,
       authorHandle,
@@ -321,7 +558,7 @@ export default function DashboardPage() {
       tag: p.tag,
       time: timeAgo(p.createdAt),
       text: sanitizeText(p.text),
-      media: hasMedia ? [{ type: isProbablyVideo(mu) ? "video" : "image", url: mu }] : undefined,
+      media: mu ? [{ type: isProbablyVideo(mu) ? "video" : "image", url: mu }] : undefined,
     };
   }
 
@@ -347,8 +584,11 @@ export default function DashboardPage() {
       setFeedHasNext(!!data.nextCursor);
     } catch {
       clearSession();
-      localStorage.removeItem("breedlink_token");
-      localStorage.removeItem("breedlink_user");
+      try {
+        localStorage.removeItem("breedlink_token");
+        localStorage.removeItem("breedlink_user");
+      } catch {}
+      setAuthed(false);
       router.replace("/login");
     } finally {
       setFeedLoading(false);
@@ -385,7 +625,6 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ upload: returns BOTH relative and absolute
   async function uploadSingleMedia(file: File, token: string): Promise<{ rel: string; abs: string }> {
     const fd = new FormData();
     fd.append("files", file);
@@ -407,10 +646,13 @@ export default function DashboardPage() {
     return { rel, abs: toAbsoluteMediaUrl(rel) };
   }
 
-  async function createPostRequest(token: string, payload: { text: string; tag: Post["tag"]; mediaUrl?: string }) {
+  async function createPostRequest(token: string, payload: { text: string; tag: PostTag; mediaUrl?: string }) {
     const res = await fetch(`${API_BASE}/posts`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(payload),
     });
 
@@ -428,9 +670,7 @@ export default function DashboardPage() {
     setPosting(true);
     try {
       let uploaded: { rel: string; abs: string } | null = null;
-      if (mediaFile) {
-        uploaded = await uploadSingleMedia(mediaFile, token);
-      }
+      if (mediaFile) uploaded = await uploadSingleMedia(mediaFile, token);
 
       // 1) Try absolute
       let res = await createPostRequest(token, {
@@ -450,40 +690,36 @@ export default function DashboardPage() {
 
       if (!res.ok) throw new Error("Failed to create");
 
-      const data = (await res.json()) as { post: ApiFeedPost };
+      toast({ type: "success", title: "Posted", msg: "Your update is live." });
 
-      const mapped = mapApiToUi(data.post);
-      setPosts((prev) => [mapped, ...prev]);
-
-      // truth refresh
       await loadFeedFirstPage();
 
       setPostText("");
-      setPostTag("Litter Update");
+      setPostTag("Announcement");
       setMediaFile(null);
       if (mediaInputRef.current) mediaInputRef.current.value = "";
+      try {
+        localStorage.removeItem(LS.draft);
+      } catch {}
 
       setTimeout(() => composerRef.current?.focus(), 50);
     } catch {
+      toast({ type: "error", title: "Post failed", msg: "Session expired or server error." });
       clearSession();
-      localStorage.removeItem("breedlink_token");
-      localStorage.removeItem("breedlink_user");
+      try {
+        localStorage.removeItem("breedlink_token");
+        localStorage.removeItem("breedlink_user");
+      } catch {}
+      setAuthed(false);
       router.replace("/login");
     } finally {
       setPosting(false);
     }
   }
 
-  // ✅ DELETE POST (author only, server enforces too)
   async function deletePost(postId: string) {
     const token = getToken();
     if (!token) return;
-
-    const idNum = Number(postId);
-    if (!Number.isFinite(idNum) || idNum <= 0) {
-      alert("Invalid post id");
-      return;
-    }
 
     const ok = confirm("Delete this post? This can’t be undone.");
     if (!ok) return;
@@ -498,83 +734,310 @@ export default function DashboardPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        alert(data?.error || "Delete failed");
+        toast({ type: "error", title: "Delete failed", msg: data?.error || "Try again." });
         return;
       }
 
-      setPosts((prev) => prev.filter((p) => p.id !== postId));
+      toast({ type: "success", title: "Deleted", msg: "Post removed." });
+      setPosts((prev) => prev.filter((p) => pid(p.id) !== postId));
       await loadFeedFirstPage();
     } catch {
+      toast({ type: "error", title: "Session expired", msg: "Please log in again." });
       clearSession();
-      localStorage.removeItem("breedlink_token");
-      localStorage.removeItem("breedlink_user");
+      try {
+        localStorage.removeItem("breedlink_token");
+        localStorage.removeItem("breedlink_user");
+      } catch {}
+      setAuthed(false);
       router.replace("/login");
     }
   }
 
+  /* ------------------------------ Lifecycle ----------------------------- */
+
   useEffect(() => {
     if (authLoading) return;
+    if (!authed) return;
     if (tab !== "community") return;
     loadFeedFirstPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, tab]);
+  }, [authLoading, authed, tab]);
+
+  useEffect(() => {
+    function onScroll() {
+      const scrollY = window.scrollY || window.pageYOffset;
+      setShowTop(scrollY > 520);
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     if (tab !== "community") return;
+    if (!feedHasNext) return;
 
-    function onScroll() {
-      if (loadingMore || feedLoading) return;
+    const el = loadMoreRef.current;
+    if (!el) return;
 
-      const scrollY = window.scrollY || window.pageYOffset;
-      const viewportH = window.innerHeight;
-      const docH = document.documentElement.scrollHeight;
-
-      setShowTop(scrollY > 520);
-
-      if (scrollY + viewportH >= docH - 450) loadMoreFeed();
-    }
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, loadingMore, feedLoading, feedHasNext, feedCursor]);
-
-  if (authLoading) {
-    return (
-      <main style={pageBg}>
-        <div style={{ maxWidth: 1240, margin: "0 auto" }}>
-          <div style={{ opacity: 0.75, fontWeight: 900, fontSize: 13, letterSpacing: 0.2, color: TEXT_MID }}>
-            Loading your account…
-          </div>
-          <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-            <div style={{ ...card, height: 124, opacity: 0.65 }} />
-            <div style={{ ...card, height: 240, opacity: 0.45 }} />
-            <div style={{ ...card, height: 240, opacity: 0.35 }} />
-          </div>
-        </div>
-      </main>
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.some((e) => e.isIntersecting);
+        if (hit) loadMoreFeed();
+      },
+      { root: null, rootMargin: "420px", threshold: 0.01 }
     );
-  }
+
+    obs.observe(el);
+    return () => obs.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, feedHasNext, feedCursor, feedLoading, loadingMore]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        const inp = document.getElementById("dash-search") as HTMLInputElement | null;
+        inp?.focus();
+      }
+      if (e.key === "Escape") {
+        setLightbox(null);
+      }
+    }
+    window.addEventListener("keydown", onKey as any);
+    return () => window.removeEventListener("keydown", onKey as any);
+  }, []);
 
   const canPost = !!sanitizeText(postText.trim()) && !posting;
 
+  const seededPosts: Post[] = posts.length ? posts : ((demoPosts as unknown) as Post[]);
+  const usingDemoPosts = posts.length === 0;
+
+  const savedCount = useMemo(() => Object.values(saves).filter(Boolean).length, [saves]);
+  const likedCount = useMemo(() => Object.values(likes).filter(Boolean).length, [likes]);
+
+  const filteredPosts = useMemo(() => {
+    let list = seededPosts.slice().map((p) => ({ ...p, id: pid(p.id) }));
+
+    if (viewMode === "Saved") list = list.filter((p) => !!saves[pid(p.id)]);
+    if (tagFilter !== "All") list = list.filter((p) => p.tag === tagFilter);
+
+    const q = normalizeForSearch(query);
+    if (q) {
+      list = list.filter((p) => {
+        const hay = normalizeForSearch(`${p.authorName} ${p.authorHandle} ${p.location || ""} ${p.tag} ${p.text}`);
+        return hay.includes(q);
+      });
+    }
+
+    if (sortMode === "Popular") {
+      list.sort((a, b) => {
+        const aid = pid(a.id);
+        const bid = pid(b.id);
+        const al = likes[aid] ? 1 : 0;
+        const bl = likes[bid] ? 1 : 0;
+        const ac = comments[aid]?.length || 0;
+        const bc = comments[bid]?.length || 0;
+        const as = saves[aid] ? 1 : 0;
+        const bs = saves[bid] ? 1 : 0;
+        const ash = shares[aid] || 0;
+        const bsh = shares[bid] || 0;
+        return bl * 3 + bc * 2 + bs + bsh - (al * 3 + ac * 2 + as + ash);
+      });
+    }
+
+    return list;
+  }, [seededPosts, viewMode, tagFilter, sortMode, query, saves, likes, comments, shares]);
+
+  const seededNetwork =
+    (demoMarketplace as unknown) as {
+      id: string;
+      title: string;
+      location: string;
+      priceLabel: string;
+      badge: string;
+      image: string;
+    }[];
+
+  const networkFiltered = useMemo(() => {
+    const q = normalizeForSearch(query);
+    if (!q) return seededNetwork;
+    return seededNetwork.filter((x) => normalizeForSearch(`${x.title} ${x.location} ${x.badge} ${x.priceLabel}`).includes(q));
+  }, [seededNetwork, query]);
+
+  function toggleLike(postId: string) {
+    const id = pid(postId);
+    setLikes((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function toggleSave(postId: string) {
+    const id = pid(postId);
+    setSaves((prev) => {
+      const nextVal = !prev[id];
+      const next = { ...prev, [id]: nextVal };
+      toast({
+        type: "info",
+        title: nextVal ? "Saved" : "Removed from Saved",
+        msg: nextVal ? "You can view it in Saved." : "Post unsaved.",
+      });
+      return next;
+    });
+  }
+
+  // ✅ Share copies DIRECT LINK, not text
+  async function sharePost(post: Post) {
+    const link = `https://lincani.com/post/${encodeURIComponent(pid(post.id))}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setShares((prev) => ({ ...prev, [pid(post.id)]: (prev[pid(post.id)] || 0) + 1 }));
+      toast({ type: "success", title: "Copied link", msg: "Direct post link copied." });
+    } catch {
+      toast({ type: "error", title: "Copy failed", msg: "Browser blocked clipboard access." });
+    }
+  }
+
+  function toggleCommentsOpen(postId: string) {
+    const id = pid(postId);
+    setOpenCommentsMap((p) => ({ ...p, [id]: !p[id] }));
+  }
+
+  function addComment(postId: string) {
+    const id = pid(postId);
+    const raw = commentDrafts[id] || "";
+    const clean = sanitizeText(raw.trim());
+    if (!clean) return;
+
+    const c: Comment = {
+      id: uid("c"),
+      postId: id,
+      author: profileHandle,
+      text: clean,
+      createdAt: Date.now(),
+      likes: 0,
+    };
+
+    setComments((prev) => {
+      const list = prev[id] ? [...prev[id]] : [];
+      list.unshift(c);
+      return { ...prev, [id]: list };
+    });
+
+    setCommentDrafts((prev) => ({ ...prev, [id]: "" }));
+    toast({ type: "success", title: "Comment added" });
+  }
+
+  // ✅ Fixed: comment-like double count (single atomic update, guarded)
+  function toggleCommentLike(postId: string, commentId: string) {
+    const id = pid(postId);
+    const ck = commentLikeKey(id, commentId);
+
+    const now = Date.now();
+    const last = commentLikeGuardRef.current[ck] || 0;
+    if (now - last < 220) return; // guards accidental double-fire
+    commentLikeGuardRef.current[ck] = now;
+
+    const currentlyLiked = !!commentLikes[ck];
+    const nextLiked = !currentlyLiked;
+    const delta = nextLiked ? 1 : -1;
+
+    setCommentLikes((prev) => ({ ...prev, [ck]: nextLiked }));
+
+    setComments((cm) => {
+      const list = cm[id] ? [...cm[id]] : [];
+      const idx = list.findIndex((x) => x.id === commentId);
+      if (idx === -1) return cm;
+      const current = list[idx];
+      list[idx] = { ...current, likes: Math.max(0, (current.likes || 0) + delta) };
+      return { ...cm, [id]: list };
+    });
+  }
+
+  const chars = postText.length;
+  const maxChars = 500;
+  const overLimit = chars > maxChars;
+
   return (
     <main style={pageBg}>
+      {/* Responsive + layout fixes (prevents right sidebar cutoff + removes horizontal overflow) */}
+      <style jsx global>{`
+        html,
+        body {
+          overflow-x: hidden;
+        }
+        @media (max-width: 1100px) {
+          .dashGrid {
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          }
+          .dashLeft {
+            position: static !important;
+            top: auto !important;
+          }
+          .dashRight {
+            position: static !important;
+            top: auto !important;
+            grid-column: 1 / -1;
+          }
+        }
+        @media (max-width: 820px) {
+          .dashGrid {
+            grid-template-columns: 1fr;
+          }
+          .dashLeft,
+          .dashRight {
+            grid-column: 1 / -1;
+          }
+        }
+        @media (max-width: 720px) {
+          .dashPad {
+            padding-left: 18px !important;
+            padding-right: 18px !important;
+          }
+          .topInner {
+            padding-left: 18px !important;
+            padding-right: 18px !important;
+          }
+        }
+      `}</style>
+
+      <ToastStack toasts={toasts} />
+
+      <AnimatePresence>
+        {lightbox?.open ? (
+          <Lightbox key="lb" type={lightbox.type} url={lightbox.url} title={lightbox.title} onClose={() => setLightbox(null)} />
+        ) : null}
+      </AnimatePresence>
+
       <div style={topBar}>
-        <div style={topBarInner}>
+        <div style={topBarInner} className="topInner">
+          {/* ✅ Single logo (no duplicates) in the nav brand slot */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 220 }}>
-            <img
-              src="/logo.png"
-              alt="Lincani"
+            <motion.button
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.985 }}
               onClick={() => router.push("/")}
               style={{
-                height: 54,
-                width: "auto",
-                objectFit: "contain",
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                display: "flex",
+                alignItems: "center",
                 cursor: "pointer",
-                filter: "drop-shadow(0 16px 34px rgba(0,0,0,0.55))",
+                borderRadius: 14,
               }}
-            />
+              aria-label="Lincani home"
+              title="Home"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo.png"
+                alt="Lincani"
+                style={{
+                  height: 54,
+                  width: "auto",
+                  objectFit: "contain",
+                  filter: "drop-shadow(0 16px 34px rgba(0,0,0,0.55))",
+                }}
+              />
+            </motion.button>
           </div>
 
           <div style={vSep} />
@@ -583,23 +1046,32 @@ export default function DashboardPage() {
             <div style={searchShell}>
               <span style={{ opacity: 0.72, fontSize: 14, color: TEXT_MID }}>⌕</span>
               <input
+                id="dash-search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search breeds, tags…"
+                placeholder="Search posts, tags, breeders…  (Ctrl+K)"
                 style={searchInput}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") setTab("marketplace");
+                  if (e.key === "Enter") setTab("network");
                 }}
               />
-              <div style={searchHint}>Enter → Marketplace</div>
+              <div style={searchHint}>Enter → Network</div>
             </div>
           </div>
 
           <div style={vSep} />
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 340, justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              minWidth: 260,
+              justifyContent: "flex-end",
+            }}
+          >
             <motion.button
-              whileHover={{ y: -1 }}
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(0,0,0,0.42)" }}
               whileTap={{ scale: 0.98 }}
               onClick={() => router.push("/")}
               style={{ ...ghostMini, width: 40, height: 40, borderRadius: 14, fontSize: 16 }}
@@ -611,9 +1083,9 @@ export default function DashboardPage() {
 
             <div style={{ position: "relative" }}>
               <motion.button
-                whileHover={{ y: -1 }}
+                whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(0,0,0,0.42)" }}
                 whileTap={{ scale: 0.98 }}
-                onClick={() => alert("Notifications coming next 👀")}
+                onClick={() => toast({ type: "info", title: "Notifications", msg: "We’ll wire this to backend next." })}
                 style={{ ...ghostMini, width: 40, height: 40, borderRadius: 14, fontSize: 16 }}
                 aria-label="Notifications"
                 title="Notifications"
@@ -623,29 +1095,50 @@ export default function DashboardPage() {
               <span style={notifDot}>3</span>
             </div>
 
-            <div style={hSep} />
+            <motion.button
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(0,0,0,0.42)" }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setViewMode((v) => (v === "All" ? "Saved" : "All"))}
+              style={{ ...ghostMini, width: 40, height: 40, borderRadius: 14, fontSize: 16 }}
+              aria-label="Saved"
+              title="Saved"
+            >
+              🔖
+            </motion.button>
 
-            <AccountMenu
-              initials={initials}
-              avatarUrl={myAvatarUrl}
-              name={profileName}
-              handle={profileHandle}
-              tagline={uiBio}
-              onProfile={() => router.push("/profile")}
-              onLogout={logout}
-            />
+            <motion.button
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(0,0,0,0.42)" }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push("/profile")}
+              style={{ ...ghostMini, width: 40, height: 40, borderRadius: 14, fontSize: 16 }}
+              aria-label="Profile"
+              title="Profile"
+            >
+              👤
+            </motion.button>
+
+            <motion.button
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(0,0,0,0.42)" }}
+              whileTap={{ scale: 0.98 }}
+              onClick={logout}
+              style={{ ...ghostMini, width: 40, height: 40, borderRadius: 14, fontSize: 16 }}
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              ⎋
+            </motion.button>
           </div>
         </div>
       </div>
 
-      <div style={layoutGrid}>
-        <aside style={{ position: "sticky", top: 108 }}>
+      <div style={layoutGrid} className="dashGrid dashPad">
+        <aside style={{ position: "sticky", top: 108 }} className="dashLeft">
           <div style={{ display: "grid", gap: 12 }}>
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={quietCard}>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
               <div style={sideTitle}>Quick Actions</div>
               <div style={{ display: "grid", gap: 10 }}>
                 <motion.button
-                  whileHover={{ y: -1 }}
+                  whileHover={{ y: -1, boxShadow: "0 18px 46px rgba(70,129,244,0.18)" }}
                   whileTap={{ scale: 0.985 }}
                   style={{ ...primaryBtn, width: "100%" }}
                   onClick={() => {
@@ -657,22 +1150,42 @@ export default function DashboardPage() {
                   Create post
                 </motion.button>
 
-                <motion.button
-                  whileHover={{ y: -1 }}
-                  whileTap={{ scale: 0.985 }}
-                  style={{ ...ghostBtn, width: "100%" }}
-                  onClick={() => router.push("/profile")}
-                >
+                <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={{ ...ghostBtn, width: "100%" }} onClick={() => router.push("/profile")}>
                   Edit profile
                 </motion.button>
 
                 <div style={divider} />
 
-                <div style={{ fontSize: 12, color: TEXT_MID, lineHeight: 1.55 }}>Consistent, honest updates build trust fast.</div>
+                <div style={{ fontSize: 12, color: TEXT_MID, lineHeight: 1.55 }}>
+                  Tip: Use <b>Ctrl+K</b> to search fast.
+                </div>
               </div>
             </motion.div>
 
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={quietCard}>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
+              <div style={sideTitle}>Filters</div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <FilterChip active={viewMode === "All"} onClick={() => setViewMode("All")} label="All posts" />
+                  <FilterChip active={viewMode === "Saved"} onClick={() => setViewMode((v) => (v === "Saved" ? "All" : "Saved"))} label={`Saved (${savedCount})`} />
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <FilterChip active={tagFilter === "All"} onClick={() => setTagFilter("All")} label="All tags" />
+                  {POST_TAGS.map((t) => (
+                    <FilterChip key={t} active={tagFilter === t} onClick={() => setTagFilter((prev) => (prev === t ? "All" : t))} label={t} />
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <FilterChip active={sortMode === "Newest"} onClick={() => setSortMode((s) => (s === "Newest" ? "Popular" : "Newest"))} label="Newest" />
+                  <FilterChip active={sortMode === "Popular"} onClick={() => setSortMode((s) => (s === "Popular" ? "Newest" : "Popular"))} label="Popular" />
+                </div>
+              </div>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
               <div style={sideTitle}>Trust & Quality</div>
               <div style={{ display: "grid", gap: 10 }}>
                 <TrustPill label="Profile completeness" value="Good" tone="good" />
@@ -688,15 +1201,17 @@ export default function DashboardPage() {
             <div style={centerTitleRow}>
               <div style={{ minWidth: 0 }}>
                 <div style={centerTitle}>Dashboard</div>
-                {subtitle ? <div style={centerSubtitle}>{subtitle}</div> : null}
+                <div style={centerSubtitle}>
+                  {authLoading ? "Checking session…" : authed ? "Community + breeder network in one premium hub." : "Redirecting to sign in…"}
+                </div>
               </div>
 
               <div style={tabsShell}>
                 <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} onClick={() => setTab("community")} style={tabBtn(tab === "community")}>
                   Community
                 </motion.button>
-                <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} onClick={() => setTab("marketplace")} style={tabBtn(tab === "marketplace")}>
-                  Marketplace
+                <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} onClick={() => setTab("network")} style={tabBtn(tab === "network")}>
+                  Network
                 </motion.button>
               </div>
             </div>
@@ -705,15 +1220,53 @@ export default function DashboardPage() {
           </div>
 
           {tab === "community" && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={heroComposerCard}>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 320, damping: 26 }}
+              style={{
+                ...heroComposerCard,
+                opacity: authed ? 1 : 0.65,
+                pointerEvents: authed ? ("auto" as const) : ("none" as const),
+              }}
+            >
               <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <Avatar initials={initials} avatarUrl={myAvatarUrl} />
+                <div style={{ width: 0, height: 0 }} />
 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={composerHeaderRow}>
                     <div>
                       <div style={composerTitle}>Create post</div>
+                      <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span style={{ ...miniChip, opacity: 0.95 }}>Draft autosaves</span>
+                        <span style={{ ...miniChip, opacity: 0.95 }}>
+                          {chars}/{maxChars}
+                        </span>
+                        {overLimit ? (
+                          <span style={{ ...miniChip, borderColor: "rgba(255,140,140,0.35)", background: "rgba(255,140,140,0.08)" }}>Too long</span>
+                        ) : null}
+                      </div>
                     </div>
+
+                    <motion.button
+                      whileHover={{ y: -1 }}
+                      whileTap={{ scale: 0.985 }}
+                      style={{ ...ghostMini, width: 44, height: 44, borderRadius: 16, fontSize: 16 }}
+                      onClick={() => {
+                        setPostText("");
+                        setPostTag("Announcement");
+                        setMediaFile(null);
+                        if (mediaInputRef.current) mediaInputRef.current.value = "";
+                        try {
+                          localStorage.removeItem(LS.draft);
+                        } catch {}
+                        toast({ type: "info", title: "Draft cleared" });
+                      }}
+                      title="Clear draft"
+                      aria-label="Clear draft"
+                    >
+                      🧹
+                    </motion.button>
                   </div>
 
                   <div style={{ ...dividerSoft, marginTop: 12, marginBottom: 12 }} />
@@ -725,16 +1278,14 @@ export default function DashboardPage() {
                     value={postText}
                     onChange={(e) => setPostText(e.target.value)}
                     placeholder="Share an update…"
-                    style={composerArea}
+                    style={{ ...composerArea, borderColor: overLimit ? "rgba(255,140,140,0.35)" : (composerArea.borderColor as any) }}
                   />
 
                   <div style={composerControls}>
-                    <select value={postTag} onChange={(e) => setPostTag(e.target.value as Post["tag"])} style={selectPill} disabled={posting}>
-                      <option>Litter Update</option>
-                      <option>Stud Available</option>
-                      <option>Looking for match</option>
-                      <option>Health Test Results</option>
-                      <option>Advice</option>
+                    <select value={postTag} onChange={(e) => setPostTag(e.target.value as PostTag)} style={selectPill} disabled={posting}>
+                      {POST_TAGS.map((t) => (
+                        <option key={t}>{t}</option>
+                      ))}
                     </select>
 
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, minWidth: 260 }}>
@@ -790,15 +1341,21 @@ export default function DashboardPage() {
                     <div style={{ flex: 1 }} />
 
                     <motion.button
-                      whileHover={{ y: -1 }}
+                      whileHover={{ y: -1, boxShadow: "0 18px 50px rgba(70,129,244,0.24)" }}
                       whileTap={{ scale: 0.985 }}
                       style={{
                         ...primaryBtn,
-                        opacity: canPost ? 1 : 0.55,
-                        cursor: canPost ? "pointer" : "not-allowed",
+                        opacity: canPost && !overLimit ? 1 : 0.55,
+                        cursor: canPost && !overLimit ? "pointer" : "not-allowed",
                       }}
-                      onClick={createPost}
-                      disabled={!canPost}
+                      onClick={() => {
+                        if (overLimit) {
+                          toast({ type: "error", title: "Too long", msg: "Keep posts under 500 characters." });
+                          return;
+                        }
+                        createPost();
+                      }}
+                      disabled={!canPost || overLimit}
                     >
                       {posting ? "Posting…" : "Post"}
                     </motion.button>
@@ -808,9 +1365,9 @@ export default function DashboardPage() {
                     <div style={{ marginTop: 12 }}>
                       <div style={{ fontSize: 12, color: TEXT_MID, marginBottom: 8 }}>Preview</div>
                       {isVideoFile(mediaFile) ? (
-                        <video controls style={{ ...mediaVideo, maxHeight: 320 }} src={mediaPreview} />
+                        <video controls style={{ ...mediaVideo, maxHeight: 360 }} src={mediaPreview} />
                       ) : (
-                        <div style={{ ...mediaImage, height: 220, backgroundImage: `url(${mediaPreview})` }} />
+                        <div style={{ ...mediaImage, height: 260, backgroundImage: `url(${mediaPreview})` }} />
                       )}
                     </div>
                   ) : null}
@@ -821,41 +1378,102 @@ export default function DashboardPage() {
 
           {tab === "community" ? (
             <>
+              {!authed ? (
+                <div style={{ ...quietCard, marginTop: 14 }}>
+                  <div style={{ fontWeight: 1000, letterSpacing: 0.1 }}>Sign-in required</div>
+                  <div style={{ marginTop: 8, fontSize: 12, color: TEXT_MID, lineHeight: 1.55 }}>Your session is missing or expired. Redirecting to login…</div>
+                  <div style={{ marginTop: 12 }}>
+                    <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={primaryBtn} onClick={() => router.replace("/login")}>
+                      Go to login
+                    </motion.button>
+                  </div>
+                </div>
+              ) : null}
+
               {feedLoading && posts.length === 0 ? (
-                <div style={{ marginTop: 12, color: TEXT_MID, fontWeight: 900, letterSpacing: 0.15 }}>Loading feed…</div>
+                <div style={{ marginTop: 14, display: "grid", gap: 14 }}>
+                  <SkeletonPostCard />
+                  <SkeletonPostCard />
+                  <SkeletonPostCard />
+                </div>
+              ) : null}
+
+              {usingDemoPosts && !feedLoading ? (
+                <div style={{ marginTop: 12, fontSize: 12, color: TEXT_MID, opacity: 0.9 }}>Showing demo posts until the community starts posting.</div>
               ) : null}
 
               <div style={feedWrap}>
-                {posts.map((p) => (
-                  <PostCard
-                    key={p.id}
-                    post={p}
-                    currentUserId={me?.id ?? null}
-                    currentUsername={me?.username ?? null}
-                    onDelete={deletePost}
-                    onVisitUser={(username) => {
-                      if (!username?.trim()) return;
-                      if (username === me?.username) {
-                        router.push("/profile");
-                        return;
-                      }
-                      const ok = confirm(`Visit @${username}'s profile?`);
-                      if (!ok) return;
-                      router.push(`/u/${encodeURIComponent(username)}`);
-                    }}
-                  />
-                ))}
+                {filteredPosts.map((p) => {
+                  const id = pid(p.id);
+                  const list = comments[id] || [];
+                  const isOpen = !!openCommentsMap[id];
+
+                  return (
+                    <PostCard
+                      key={id}
+                      post={{ ...p, id }}
+                      currentUserId={me?.id ?? null}
+                      currentUsername={me?.username ?? null}
+                      saved={!!saves[id]}
+                      liked={!!likes[id]}
+                      sharesCount={shares[id] || 0}
+                      commentCount={list.length}
+                      commentsList={list}
+                      isCommentsOpen={isOpen}
+                      commentDraft={commentDrafts[id] || ""}
+                      onCommentDraft={(v) => setCommentDrafts((prev) => ({ ...prev, [id]: v }))}
+                      onToggleComments={() => toggleCommentsOpen(id)}
+                      onAddComment={() => addComment(id)}
+                      onToggleCommentLike={(commentId) => toggleCommentLike(id, commentId)}
+                      commentLiked={(commentId) => !!commentLikes[commentLikeKey(id, commentId)]}
+                      onDelete={deletePost}
+                      onLike={() => toggleLike(id)}
+                      onSave={() => toggleSave(id)}
+                      onShare={() => sharePost(p)}
+                      onOpenMedia={(m) => {
+                        setLightbox({
+                          open: true,
+                          type: m.type,
+                          url: m.url,
+                          title: `${p.authorHandle} • ${p.tag}`,
+                        });
+                      }}
+                      onVisitUser={(username) => {
+                        if (!username?.trim()) return;
+                        if (username === me?.username) {
+                          router.push("/profile");
+                          return;
+                        }
+                        const ok = confirm(`Visit @${username}'s profile?`);
+                        if (!ok) return;
+                        router.push(`/u/${encodeURIComponent(username)}`);
+                      }}
+                      isOnline={p.authorUsername ? p.authorUsername === me?.username : false}
+                    />
+                  );
+                })}
               </div>
 
-              <div style={feedFooter}>{loadingMore ? "Loading more…" : feedHasNext ? "Scroll for more" : "You’re all caught up"}</div>
+              <div ref={loadMoreRef} style={{ height: 1 }} />
+
+              <div style={feedFooter}>{loadingMore ? "Loading more…" : feedHasNext ? "Keep scrolling" : "You’re all caught up"}</div>
             </>
           ) : (
-            <MarketplaceMock />
+            <NetworkMock items={networkFiltered} />
           )}
         </section>
 
-        <aside style={{ position: "sticky", top: 108 }}>
-          <DiscoverySidebar onGoMarketplace={() => setTab("marketplace")} />
+        <aside style={{ position: "sticky", top: 108 }} className="dashRight">
+          <DiscoverySidebar
+            name={profileName}
+            handle={profileHandle}
+            initials={initials}
+            bio={uiBio}
+            savedCount={savedCount}
+            likedCount={likedCount}
+            onGoNetwork={() => setTab("network")}
+            onGoProfile={() => router.push("/profile")}
+          />
         </aside>
       </div>
 
@@ -863,8 +1481,13 @@ export default function DashboardPage() {
         <motion.button
           whileHover={{ y: -2 }}
           whileTap={{ scale: 0.98 }}
-          style={floatingCreate}
+          style={{
+            ...floatingCreate,
+            opacity: authed ? 1 : 0.55,
+            cursor: authed ? "pointer" : "not-allowed",
+          }}
           onClick={() => {
+            if (!authed) return;
             window.scrollTo({ top: 0, behavior: "smooth" });
             setTimeout(() => composerRef.current?.focus(), 50);
           }}
@@ -893,98 +1516,176 @@ export default function DashboardPage() {
   );
 }
 
-/* ---------- Account Menu ---------- */
+/* ----------------------------- UI Components ---------------------------- */
 
-function AccountMenu({
-  initials,
-  avatarUrl,
-  name,
-  handle,
-  tagline,
-  onProfile,
-  onLogout,
-}: {
-  initials: string;
-  avatarUrl: string | null;
-  name: string;
-  handle: string;
-  tagline: string;
-  onProfile: () => void;
-  onLogout: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
+const POST_TAGS: PostTag[] = [
+  "Announcement",
+  "Litter Update",
+  "Program Update",
+  "Health Testing",
+  "Stud Available",
+  "Looking for Match",
+  "Breeding Advice",
+  "Mentorship",
+  "Question",
+  "Success Story",
+  "Event / Meetup",
+  "Resources",
+];
 
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
-
+function FilterChip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} onClick={() => setOpen((v) => !v)} style={accountChip} aria-label="Account menu" title="Account">
-        <span style={accountAvatar}>
-          {avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 12 }} />
-          ) : (
-            initials
-          )}
-        </span>
-        <span style={{ minWidth: 0 }}>
-          <div style={accountName}>{name}</div>
-          <div style={accountHandle}>{handle}</div>
-        </span>
-        <span style={{ opacity: 0.75, color: TEXT_MID }}>▾</span>
-      </motion.button>
+    <motion.button
+      whileHover={{ y: -1 }}
+      whileTap={{ scale: 0.985 }}
+      onClick={onClick}
+      style={{
+        ...miniChip,
+        cursor: "pointer",
+        borderColor: active ? "rgba(70,129,244,0.40)" : "rgba(255,255,255,0.12)",
+        background: active ? "rgba(70,129,244,0.12)" : "rgba(255,255,255,0.03)",
+      }}
+    >
+      {label}
+    </motion.button>
+  );
+}
 
-      {open && (
-        <div style={accountMenuInward}>
-          <div style={{ padding: 12 }}>
-            <div style={{ fontWeight: 1000, letterSpacing: 0.1, color: TEXT_HIGH }}>{name}</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: TEXT_MID }}>{handle}</div>
-            <div style={{ marginTop: 10, fontSize: 12, color: TEXT_LOW, lineHeight: 1.5 }}>{tagline}</div>
-          </div>
-
-          <div style={menuDivider} />
-
-          <button
-            onClick={() => {
-              setOpen(false);
-              onProfile();
+function ToastStack({ toasts }: { toasts: Toast[] }) {
+  return (
+    <div style={toastWrap}>
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 420, damping: 28 }}
+            style={{
+              ...toastCard,
+              borderColor:
+                t.type === "success" ? "rgba(86,245,162,0.26)" : t.type === "error" ? "rgba(255,140,140,0.26)" : "rgba(70,129,244,0.22)",
+              background:
+                t.type === "success"
+                  ? "linear-gradient(180deg, rgba(86,245,162,0.10), rgba(255,255,255,0.02))"
+                  : t.type === "error"
+                  ? "linear-gradient(180deg, rgba(255,140,140,0.10), rgba(255,255,255,0.02))"
+                  : "linear-gradient(180deg, rgba(70,129,244,0.10), rgba(255,255,255,0.02))",
             }}
-            style={menuItem}
           >
-            View / Edit profile
-          </button>
-
-          <div style={menuDivider} />
-
-          <button
-            onClick={() => {
-              setOpen(false);
-              onLogout();
-            }}
-            style={menuItem}
-          >
-            Sign out
-          </button>
-        </div>
-      )}
+            <div style={{ fontWeight: 1000, letterSpacing: 0.1 }}>{t.title}</div>
+            {t.msg ? <div style={{ marginTop: 6, fontSize: 12, color: TEXT_MID, lineHeight: 1.45 }}>{t.msg}</div> : null}
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
 
-/* ---------- RIGHT SIDEBAR ---------- */
+function Lightbox({ type, url, title, onClose }: { type: "image" | "video"; url: string; title?: string; onClose: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      style={lightboxBackdrop}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <motion.div initial={{ opacity: 0, y: 14, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} style={lightboxCard}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          <div style={{ fontWeight: 1000, color: TEXT_HIGH, letterSpacing: 0.1, fontSize: 13 }}>{title || "Media"}</div>
+          <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.98 }} style={{ ...ghostMini, width: 38, height: 38 }} onClick={onClose} aria-label="Close" title="Close">
+            ✕
+          </motion.button>
+        </div>
 
-function DiscoverySidebar({ onGoMarketplace }: { onGoMarketplace: () => void }) {
+        <div style={{ marginTop: 12 }}>
+          {type === "image" ? (
+            <div style={{ ...mediaImage, height: 460, backgroundImage: `url(${url})` }} />
+          ) : (
+            <video controls style={{ ...mediaVideo, maxHeight: 560 }} src={url} />
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function SkeletonPostCard() {
+  return (
+    <div style={{ ...postCardPremium, padding: 16, opacity: 0.9 }}>
+      <div style={{ display: "flex", gap: 12 }}>
+        <div style={{ width: 48, height: 48, borderRadius: 16, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.10)" }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ height: 12, width: 180, borderRadius: 999, background: "rgba(255,255,255,0.07)" }} />
+          <div style={{ height: 10, width: 120, borderRadius: 999, background: "rgba(255,255,255,0.06)", marginTop: 10 }} />
+          <div style={{ height: 10, width: "92%", borderRadius: 999, background: "rgba(255,255,255,0.05)", marginTop: 16 }} />
+          <div style={{ height: 10, width: "86%", borderRadius: 999, background: "rgba(255,255,255,0.05)", marginTop: 10 }} />
+          <div style={{ height: 10, width: "68%", borderRadius: 999, background: "rgba(255,255,255,0.05)", marginTop: 10 }} />
+          <div style={{ height: 210, borderRadius: 18, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", marginTop: 16 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DiscoverySidebar({
+  name,
+  handle,
+  initials,
+  bio,
+  savedCount,
+  likedCount,
+  onGoNetwork,
+  onGoProfile,
+}: {
+  name: string;
+  handle: string;
+  initials: string;
+  bio: string;
+  savedCount: number;
+  likedCount: number;
+  onGoNetwork: () => void;
+  onGoProfile: () => void;
+}) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={quietCard}>
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <Avatar initials={initials} avatarUrl={null} online size={54} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 1000, letterSpacing: 0.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...premiumNameStyle(handle) }}>{name}</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: TEXT_MID }}>{handle}</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, color: TEXT_LOW, lineHeight: 1.55 }}>{bio}</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+          <div style={statRow}>
+            <div style={{ fontSize: 12, color: TEXT_MID }}>Saved</div>
+            <div style={statNum}>{savedCount}</div>
+          </div>
+          <div style={statRow}>
+            <div style={{ fontSize: 12, color: TEXT_MID }}>Likes</div>
+            <div style={statNum}>{likedCount}</div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={{ ...ghostBtn, flex: 1 }} onClick={onGoProfile}>
+            Profile
+          </motion.button>
+          <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={{ ...primaryBtn, flex: 1 }} onClick={onGoNetwork}>
+            Network
+          </motion.button>
+        </div>
+      </motion.div>
+
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
         <div style={sideTitle}>Recommended Breeders</div>
         <div style={{ display: "grid", gap: 10 }}>
           <RecommendRow name="Northwest Bulldogs" meta="French Bulldog • Tacoma" />
@@ -993,27 +1694,26 @@ function DiscoverySidebar({ onGoMarketplace }: { onGoMarketplace: () => void }) 
         </div>
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={quietCard}>
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
         <div style={sideTitle}>Trending</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
           <TagPill text="#HealthTesting" />
+          <TagPill text="#Mentorship" />
           <TagPill text="#StudAvailable" />
           <TagPill text="#LitterUpdate" />
-          <TagPill text="#OFA" />
-          <TagPill text="#PennHIP" />
-          <TagPill text="#Advice" />
+          <TagPill text="#Resources" />
         </div>
 
         <div style={{ ...divider, marginTop: 14, marginBottom: 12 }} />
 
-        <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={{ ...ghostBtn, width: "100%" }} onClick={onGoMarketplace}>
-          Browse matches →
+        <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={{ ...ghostBtn, width: "100%" }} onClick={onGoNetwork}>
+          Find breeders →
         </motion.button>
       </motion.div>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={quietCard}>
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} style={quietCard}>
         <div style={sideTitle}>Events near you</div>
-        <EventRow title="AKC Meetup" meta="Seattle • Saturday" />
+        <EventRow title="Breeder Roundtable" meta="Seattle • Saturday" />
         <EventRow title="Vet Screening Day" meta="Tacoma • Next week" />
         <EventRow title="Training Workshop" meta="Olympia • Feb 24" />
       </motion.div>
@@ -1049,20 +1749,52 @@ function EventRow({ title, meta }: { title: string; meta: string }) {
   );
 }
 
-/* ---------- FEED ---------- */
-
 function PostCard({
   post,
   currentUserId,
   currentUsername,
+  saved,
+  liked,
+  sharesCount,
+  commentCount,
+  commentsList,
+  isCommentsOpen,
+  commentDraft,
+  onCommentDraft,
+  onToggleComments,
+  onAddComment,
+  onToggleCommentLike,
+  commentLiked,
   onDelete,
   onVisitUser,
+  onLike,
+  onSave,
+  onShare,
+  onOpenMedia,
+  isOnline,
 }: {
   post: Post;
   currentUserId: number | null;
   currentUsername: string | null;
+  saved: boolean;
+  liked: boolean;
+  sharesCount: number;
+  commentCount: number;
+  commentsList: Comment[];
+  isCommentsOpen: boolean;
+  commentDraft: string;
+  onCommentDraft: (v: string) => void;
+  onToggleComments: () => void;
+  onAddComment: () => void;
+  onToggleCommentLike: (commentId: string) => void;
+  commentLiked: (commentId: string) => boolean;
   onDelete: (postId: string) => void;
   onVisitUser: (username: string) => void;
+  onLike: () => void;
+  onSave: () => void;
+  onShare: () => void;
+  onOpenMedia: (m: { type: "image" | "video"; url: string }) => void;
+  isOnline: boolean;
 }) {
   const initials = post.authorName
     .split(" ")
@@ -1087,32 +1819,43 @@ function PostCard({
 
   const clickable = !!post.authorUsername;
 
+  const topComment = useMemo(() => {
+    if (!commentsList?.length) return null;
+    let best = commentsList[0];
+    for (const c of commentsList) {
+      if ((c.likes || 0) > (best.likes || 0)) best = c;
+      else if ((c.likes || 0) === (best.likes || 0) && c.createdAt > best.createdAt) best = c;
+    }
+    return best;
+  }, [commentsList]);
+
+  const authorSeed = post.authorUsername || post.authorHandle || post.authorName;
+
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={postCardPremium}>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -2, scale: 1.01, boxShadow: "0 30px 90px rgba(0,0,0,0.70)" }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+      style={postCardPremium}
+    >
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         <div
           onClick={() => {
             if (!clickable || !post.authorUsername) return;
-            // self -> /profile, others -> confirm + /u/[username]
-            if (post.authorUsername === currentUsername) {
-              onVisitUser(post.authorUsername);
-              return;
-            }
             onVisitUser(post.authorUsername);
           }}
-          style={{
-            cursor: clickable ? "pointer" : "default",
-          }}
+          style={{ cursor: clickable ? "pointer" : "default" }}
           title={clickable ? "Visit profile" : "User avatar"}
         >
-          <Avatar initials={initials} avatarUrl={post.authorAvatarUrl ?? null} />
+          <Avatar initials={initials} avatarUrl={post.authorAvatarUrl ?? null} online={isOnline} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={postHeaderLine}>
-                <span style={postAuthor}>{post.authorName}</span>
+                <span style={{ ...postAuthor, ...premiumNameStyle(authorSeed) }}>{post.authorName}</span>
                 <span style={postHandle}>{post.authorHandle}</span>
                 <span style={postTime}>• {post.time}</span>
                 {post.location ? <span style={postLoc}>• {post.location}</span> : null}
@@ -1120,18 +1863,12 @@ function PostCard({
 
               <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <span style={tagBadge}>{post.tag}</span>
+                {saved ? <span style={{ ...miniChip, borderColor: "rgba(70,129,244,0.35)", background: "rgba(70,129,244,0.10)" }}>Saved</span> : null}
               </div>
             </div>
 
             <div ref={menuRef} style={{ position: "relative" }}>
-              <motion.button
-                whileHover={{ y: -1 }}
-                whileTap={{ scale: 0.985 }}
-                style={ghostMini}
-                aria-label="More"
-                onClick={() => setOpen((v) => !v)}
-                title="More"
-              >
+              <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={ghostMini} aria-label="More" onClick={() => setOpen((v) => !v)} title="More">
                 ⋯
               </motion.button>
 
@@ -1161,9 +1898,24 @@ function PostCard({
             <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
               {post.media.map((m, idx) =>
                 m.type === "image" ? (
-                  <div key={idx} style={{ ...mediaImage, backgroundImage: `url(${m.url})` }} />
+                  <motion.div
+                    key={idx}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.995 }}
+                    style={{ ...mediaImage, backgroundImage: `url(${m.url})`, cursor: "pointer" }}
+                    title="Open"
+                    onClick={() => onOpenMedia(m)}
+                  />
                 ) : (
-                  <video key={idx} controls style={mediaVideo} src={m.url} />
+                  <motion.video
+                    key={idx}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.995 }}
+                    controls
+                    style={{ ...mediaVideo, cursor: "pointer" } as any}
+                    src={m.url}
+                    onClick={() => onOpenMedia(m)}
+                  />
                 )
               )}
             </div>
@@ -1172,73 +1924,235 @@ function PostCard({
           <div style={{ ...dividerSoft, marginTop: 14, marginBottom: 12 }} />
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={actionPill}>
-              🤍 Like
+            <motion.button
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(70,129,244,0.14)" }}
+              whileTap={{ scale: 0.985 }}
+              style={{
+                ...actionPill,
+                borderColor: liked ? "rgba(70,129,244,0.40)" : (actionPill.border as any),
+                background: liked ? "rgba(70,129,244,0.10)" : (actionPill.background as any),
+              }}
+              onClick={onLike}
+            >
+              {liked ? "💙 Like" : "🤍 Like"}
             </motion.button>
-            <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={actionPill}>
-              💬 Comment
+
+            <motion.button
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(70,129,244,0.12)" }}
+              whileTap={{ scale: 0.985 }}
+              style={{
+                ...actionPill,
+                borderColor: isCommentsOpen ? "rgba(70,129,244,0.32)" : (actionPill.border as any),
+                background: isCommentsOpen ? "rgba(70,129,244,0.08)" : (actionPill.background as any),
+              }}
+              onClick={onToggleComments}
+            >
+              💬 Comment {commentCount ? <span style={{ marginLeft: 6, opacity: 0.9 }}>({fmtCount(commentCount)})</span> : null}
             </motion.button>
-            <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={actionPill}>
+
+            <motion.button whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(0,0,0,0.35)" }} whileTap={{ scale: 0.985 }} style={actionPill} onClick={onShare}>
               ↗ Share
             </motion.button>
-            <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={actionPill}>
-              🔖 Save
+
+            <motion.button
+              whileHover={{ y: -1, boxShadow: "0 18px 44px rgba(70,129,244,0.12)" }}
+              whileTap={{ scale: 0.985 }}
+              style={{
+                ...actionPill,
+                borderColor: saved ? "rgba(70,129,244,0.40)" : (actionPill.border as any),
+                background: saved ? "rgba(70,129,244,0.10)" : (actionPill.background as any),
+              }}
+              onClick={onSave}
+            >
+              {saved ? "🔖 Saved" : "🔖 Save"}
             </motion.button>
           </div>
+
+          <div style={countsLine}>
+            <span style={countsStrong}>{liked ? 1 : 0}</span> likes • <span style={countsStrong}>{fmtCount(commentCount)}</span> comments •{" "}
+            <span style={countsStrong}>{fmtCount(sharesCount)}</span> shares
+          </div>
+
+          {!isCommentsOpen ? (
+            <div style={commentPreviewRow}>
+              {commentCount > 0 ? (
+                <>
+                  {topComment ? (
+                    <div style={commentPreviewText} title={`${topComment.author}: ${topComment.text}`}>
+                      <span style={{ fontWeight: 950, marginRight: 8, ...premiumNameStyle(topComment.author) }}>{topComment.author}</span>
+                      <span style={{ color: TEXT_MID }}>{topComment.text}</span>
+                      <span style={{ marginLeft: 10, fontSize: 11, color: TEXT_LOW }}>
+                        • {fmtCount(topComment.likes || 0)} like{(topComment.likes || 0) === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={commentPreviewText}>
+                      <span style={{ color: TEXT_MID }}>Comments available</span>
+                    </div>
+                  )}
+
+                  <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={viewCommentsBtn} onClick={onToggleComments}>
+                    View all {fmtCount(commentCount)} comments
+                  </motion.button>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: TEXT_MID, lineHeight: 1.5 }}>No comments yet.</div>
+              )}
+            </div>
+          ) : null}
+
+          <AnimatePresence initial={false}>
+            {isCommentsOpen && (
+              <motion.div
+                key="comments"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                transition={{ type: "spring", stiffness: 320, damping: 26 }}
+                style={{ marginTop: 12 }}
+              >
+                <div style={commentPanel}>
+                  <div style={commentPanelHeader}>
+                    <div style={{ fontWeight: 1000, letterSpacing: 0.1, color: TEXT_HIGH }}>Comments</div>
+                    <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={closeCommentsBtn} onClick={onToggleComments} aria-label="Close comments" title="Close">
+                      ✕
+                    </motion.button>
+                  </div>
+
+                  <div style={commentScrollArea}>
+                    {commentsList.length ? (
+                      commentsList.map((c) => {
+                        const likedC = commentLiked(c.id);
+                        return (
+                          <motion.div
+                            key={c.id}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ type: "spring", stiffness: 360, damping: 28 }}
+                            style={commentCard}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                              <div style={{ fontWeight: 950, letterSpacing: 0.1, ...premiumNameStyle(c.author) }}>{c.author}</div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <div style={{ fontSize: 11, color: TEXT_LOW }}>{timeAgo(c.createdAt)}</div>
+                                <motion.button
+                                  whileHover={{ y: -1 }}
+                                  whileTap={{ scale: 0.985 }}
+                                  onClick={() => onToggleCommentLike(c.id)}
+                                  style={{
+                                    ...commentLikeBtn,
+                                    borderColor: likedC ? "rgba(70,129,244,0.40)" : "rgba(255,255,255,0.12)",
+                                    background: likedC ? "rgba(70,129,244,0.10)" : "rgba(255,255,255,0.02)",
+                                  }}
+                                  title="Like comment"
+                                  aria-label="Like comment"
+                                >
+                                  {likedC ? "💙" : "🤍"} <span style={{ fontSize: 12, fontWeight: 900, color: TEXT_HIGH }}>{fmtCount(c.likes || 0)}</span>
+                                </motion.button>
+                              </div>
+                            </div>
+
+                            <div style={commentText}>{c.text}</div>
+                          </motion.div>
+                        );
+                      })
+                    ) : (
+                      <div style={{ fontSize: 12, color: TEXT_MID, lineHeight: 1.55 }}>No comments yet. Be the first.</div>
+                    )}
+                  </div>
+
+                  <div style={{ ...dividerSoft, marginTop: 12, marginBottom: 12 }} />
+
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <textarea value={commentDraft} onChange={(e) => onCommentDraft(e.target.value)} placeholder="Add a comment…" style={{ ...composerArea, minHeight: 74 }} />
+                    <motion.button
+                      whileHover={{ y: -1, boxShadow: "0 18px 50px rgba(70,129,244,0.20)" }}
+                      whileTap={{ scale: 0.985 }}
+                      style={{ ...primaryBtn, padding: "12px 16px", borderRadius: 16 }}
+                      onClick={onAddComment}
+                      disabled={!sanitizeText(commentDraft.trim())}
+                    >
+                      Post
+                    </motion.button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </motion.div>
   );
 }
 
-function Avatar({ initials, avatarUrl }: { initials: string; avatarUrl: string | null }) {
+function Avatar({ initials, avatarUrl, online, size = 48 }: { initials: string; avatarUrl: string | null; online?: boolean; size?: number }) {
+  const radius = Math.round(size * 0.33);
+  const dotSize = Math.max(9, Math.round(size * 0.2));
+
   return (
-    <div style={avatarShell} aria-label="User avatar">
+    <div style={{ ...avatarShell, width: size, height: size, borderRadius: radius, position: "relative" }} aria-label="User avatar">
       {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 14 }} />
+        <img src={avatarUrl} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: radius }} />
       ) : (
         initials
+      )}
+
+      {typeof online === "boolean" && (
+        <span
+          style={{
+            position: "absolute",
+            right: 4,
+            bottom: 4,
+            width: dotSize,
+            height: dotSize,
+            borderRadius: 999,
+            background: online ? "#56F5A2" : "rgba(170,170,170,0.55)",
+            boxShadow: online ? "0 0 0 4px rgba(86,245,162,0.12)" : "0 0 0 4px rgba(255,255,255,0.06)",
+            border: "1px solid rgba(0,0,0,0.35)",
+          }}
+        />
       )}
     </div>
   );
 }
 
-/* ---------- Marketplace mock ---------- */
+/* --------------------------- Network (Mock) ----------------------------- */
 
-function MarketplaceMock() {
+function NetworkMock({ items }: { items: { id: string; title: string; location: string; priceLabel: string; badge: string; image: string }[] }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
-      <DogTile name="Luna" breed="French Bulldog" age="2 yrs" tag="Verified" />
-      <DogTile name="Atlas" breed="Doberman" age="3 yrs" tag="Health Docs" />
-      <DogTile name="Milo" breed="Golden Retriever" age="1 yr" tag="Available" />
-      <DogTile name="Nova" breed="Rottweiler" age="2 yrs" tag="Verified" />
-      <DogTile name="Koda" breed="Husky" age="4 yrs" tag="Stud" />
-      <DogTile name="Bella" breed="Poodle" age="2 yrs" tag="Health Docs" />
+      {items.map((it) => (
+        <NetworkTile key={it.id} item={it} />
+      ))}
     </div>
   );
 }
 
-function DogTile({ name, breed, age, tag }: { name: string; breed: string; age: string; tag: string }) {
+function NetworkTile({ item }: { item: { title: string; location: string; priceLabel: string; badge: string; image: string } }) {
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={quietCard}>
-      <div style={dogMedia} />
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ fontWeight: 1000, letterSpacing: 0.1, color: TEXT_HIGH }}>{name}</div>
-        <span style={miniChip}>{tag}</span>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -2, scale: 1.01 }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+      style={quietCard}
+    >
+      <div style={{ ...dogMedia, backgroundImage: `url(${item.image})`, backgroundSize: "cover", backgroundPosition: "center" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+        <div style={{ fontWeight: 1000, letterSpacing: 0.1, color: TEXT_HIGH, lineHeight: 1.2 }}>{item.title}</div>
+        <span style={miniChip}>{item.badge}</span>
       </div>
       <div style={{ marginTop: 6, fontSize: 13, color: TEXT_MID }}>
-        {breed} • {age}
+        {item.location} • <span style={{ color: TEXT_HIGH, fontWeight: 900 }}>{item.priceLabel}</span>
       </div>
       <div style={{ ...dividerSoft, marginTop: 14, marginBottom: 12 }} />
       <motion.button whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }} style={{ ...primaryBtn, width: "100%" }}>
-        View details
+        View profile
       </motion.button>
     </motion.div>
   );
 }
-
-/* ---------- Sidebar helpers ---------- */
 
 function TrustPill({ label, value, tone }: { label: string; value: string; tone: "good" | "neutral" }) {
   const border = tone === "good" ? "rgba(70,129,244,0.26)" : "rgba(201,179,126,0.22)";
@@ -1251,7 +2165,7 @@ function TrustPill({ label, value, tone }: { label: string; value: string; tone:
   );
 }
 
-/* ---------- Styles ---------- */
+/* ------------------------------- Styles -------------------------------- */
 
 const TEXT_HIGH = "rgba(244,241,235,0.96)";
 const TEXT_MID = "rgba(214,208,200,0.72)";
@@ -1266,6 +2180,7 @@ const pageBg: React.CSSProperties = {
   fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
   WebkitFontSmoothing: "antialiased",
   MozOsxFontSmoothing: "grayscale",
+  overflowX: "hidden",
 };
 
 const topBar: React.CSSProperties = {
@@ -1282,10 +2197,10 @@ const topBar: React.CSSProperties = {
 };
 
 const topBarInner: React.CSSProperties = {
-  maxWidth: 1240,
+  maxWidth: 1480,
   margin: "0 auto",
   height: "100%",
-  padding: "0 40px",
+  padding: "0 28px",
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
@@ -1293,12 +2208,13 @@ const topBarInner: React.CSSProperties = {
 };
 
 const layoutGrid: React.CSSProperties = {
-  maxWidth: 1240,
+  maxWidth: 1480,
   margin: "0 auto",
   display: "grid",
-  gridTemplateColumns: "290px 1fr 340px",
+  gridTemplateColumns: "minmax(240px, 260px) minmax(0, 1fr) minmax(280px, 320px)",
   gap: 18,
   alignItems: "start",
+  overflowX: "visible",
 };
 
 const surface: React.CSSProperties = {
@@ -1308,15 +2224,9 @@ const surface: React.CSSProperties = {
   backdropFilter: "blur(12px)",
 };
 
-const card: React.CSSProperties = {
-  ...surface,
-  padding: 16,
-  background: "rgba(255,255,255,0.04)",
-};
-
 const quietCard: React.CSSProperties = {
   ...surface,
-  padding: 16,
+  padding: 14,
   background: "linear-gradient(180deg, rgba(255,255,255,0.030), rgba(255,255,255,0.014))",
 };
 
@@ -1337,7 +2247,8 @@ const heroComposerCard: React.CSSProperties = {
 const divider: React.CSSProperties = {
   height: 1,
   width: "100%",
-  background: "linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.10), rgba(255,255,255,0.08), rgba(255,255,255,0.00))",
+  background:
+    "linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.10), rgba(255,255,255,0.08), rgba(255,255,255,0.00))",
 };
 
 const dividerSoft: React.CSSProperties = {
@@ -1354,14 +2265,6 @@ const vSep: React.CSSProperties = {
   opacity: 0.85,
 };
 
-const hSep: React.CSSProperties = {
-  width: 1,
-  height: 28,
-  background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.14), rgba(255,255,255,0.02))",
-  opacity: 0.85,
-  margin: "0 2px",
-};
-
 const searchShell: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -1372,8 +2275,8 @@ const searchShell: React.CSSProperties = {
   background: "linear-gradient(180deg, rgba(255,255,255,0.030), rgba(255,255,255,0.014))",
   boxShadow: "0 16px 44px rgba(0,0,0,0.45)",
   backdropFilter: "blur(12px)",
-  width: 600,
-  maxWidth: "56vw",
+  width: 620,
+  maxWidth: "58vw",
 };
 
 const searchInput: React.CSSProperties = {
@@ -1532,6 +2435,20 @@ const actionPill: React.CSSProperties = {
   letterSpacing: 0.1,
 };
 
+const commentLikeBtn: React.CSSProperties = {
+  border: "1px solid rgba(255,255,255,0.12)",
+  background: "rgba(255,255,255,0.02)",
+  color: TEXT_HIGH,
+  padding: "8px 10px",
+  borderRadius: 999,
+  cursor: "pointer",
+  fontWeight: 900,
+  letterSpacing: 0.12,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+};
+
 const tagBadge: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -1633,7 +2550,7 @@ const postHeaderLine: React.CSSProperties = {
   flexWrap: "wrap",
 };
 
-const postAuthor: React.CSSProperties = { fontWeight: 950, letterSpacing: 0.1, color: TEXT_HIGH };
+const postAuthor: React.CSSProperties = { fontWeight: 950, letterSpacing: 0.1 };
 const postHandle: React.CSSProperties = { color: TEXT_MID };
 const postTime: React.CSSProperties = { color: TEXT_MID, opacity: 0.7 };
 const postLoc: React.CSSProperties = { color: TEXT_MID, opacity: 0.65 };
@@ -1649,12 +2566,16 @@ const postBody: React.CSSProperties = {
 
 const mediaImage: React.CSSProperties = {
   width: "100%",
-  height: 320,
+  height: 360,
+  maxHeight: 460,
   borderRadius: 18,
   border: "1px solid rgba(255,255,255,0.10)",
   backgroundSize: "cover",
   backgroundPosition: "center",
+  backgroundRepeat: "no-repeat",
+  backgroundColor: "rgba(255,255,255,0.02)",
   boxShadow: "0 18px 50px rgba(0,0,0,0.45)",
+  overflow: "hidden",
 };
 
 const mediaVideo: React.CSSProperties = {
@@ -1663,6 +2584,86 @@ const mediaVideo: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.10)",
   background: "rgba(0,0,0,0.35)",
   boxShadow: "0 18px 50px rgba(0,0,0,0.45)",
+};
+
+const countsLine: React.CSSProperties = {
+  marginTop: 10,
+  fontSize: 12,
+  color: TEXT_MID,
+  letterSpacing: 0.1,
+};
+
+const countsStrong: React.CSSProperties = {
+  color: TEXT_HIGH,
+  fontWeight: 900,
+};
+
+const commentPreviewRow: React.CSSProperties = {
+  marginTop: 10,
+  display: "grid",
+  gap: 10,
+};
+
+const commentPreviewText: React.CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.5,
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  opacity: 0.92,
+};
+
+const viewCommentsBtn: React.CSSProperties = {
+  alignSelf: "flex-start",
+  border: "none",
+  background: "transparent",
+  color: "rgba(214,208,200,0.78)",
+  fontSize: 12,
+  fontWeight: 900,
+  letterSpacing: 0.12,
+  cursor: "pointer",
+  padding: 0,
+};
+
+const commentPanel: React.CSSProperties = {
+  borderRadius: 18,
+  border: "1px solid rgba(255,255,255,0.10)",
+  background: "linear-gradient(180deg, rgba(255,255,255,0.016), rgba(255,255,255,0.010))",
+  padding: 12,
+  boxShadow: "0 18px 50px rgba(0,0,0,0.35)",
+  backdropFilter: "blur(12px)",
+};
+
+const commentPanelHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  marginBottom: 10,
+};
+
+const closeCommentsBtn: React.CSSProperties = {
+  ...ghostMini,
+  width: 34,
+  height: 34,
+  borderRadius: 12,
+};
+
+const commentScrollArea: React.CSSProperties = {
+  maxHeight: 220,
+  overflowY: "auto",
+  display: "grid",
+  gap: 10,
+  paddingRight: 6,
+};
+
+const commentText: React.CSSProperties = {
+  marginTop: 8,
+  fontSize: 13,
+  color: TEXT_HIGH,
+  opacity: 0.92,
+  lineHeight: 1.55,
+  whiteSpace: "pre-wrap",
 };
 
 const tagPill: React.CSSProperties = {
@@ -1695,7 +2696,12 @@ const recommendName: React.CSSProperties = {
   color: TEXT_HIGH,
 };
 
-const sideTitle: React.CSSProperties = { fontWeight: 1000, marginBottom: 10, letterSpacing: 0.15, color: TEXT_HIGH };
+const sideTitle: React.CSSProperties = {
+  fontWeight: 1000,
+  marginBottom: 10,
+  letterSpacing: 0.15,
+  color: TEXT_HIGH,
+};
 
 const trustRow: React.CSSProperties = {
   display: "flex",
@@ -1716,7 +2722,7 @@ const miniChip: React.CSSProperties = {
 };
 
 const dogMedia: React.CSSProperties = {
-  height: 190,
+  height: 200,
   borderRadius: 16,
   background: "linear-gradient(135deg, rgba(70,129,244,0.18), rgba(255,255,255,0.03))",
   border: "1px solid rgba(255,255,255,0.08)",
@@ -1738,7 +2744,6 @@ const floatingCreate: React.CSSProperties = {
   fontSize: 26,
   display: "grid",
   placeItems: "center",
-  cursor: "pointer",
   boxShadow: "0 18px 50px rgba(70,129,244,0.28), 0 18px 60px rgba(0,0,0,0.55)",
   zIndex: 60,
 };
@@ -1762,86 +2767,6 @@ const floatingTop: React.CSSProperties = {
   zIndex: 60,
 };
 
-const accountChip: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-  padding: "8px 10px",
-  borderRadius: 18,
-  border: "1px solid rgba(255,255,255,0.14)",
-  background: "linear-gradient(180deg, rgba(255,255,255,0.020), rgba(255,255,255,0.010))",
-  boxShadow: "0 16px 44px rgba(0,0,0,0.40)",
-  cursor: "pointer",
-  minWidth: 190,
-  maxWidth: 240,
-};
-
-const accountAvatar: React.CSSProperties = {
-  width: 36,
-  height: 36,
-  borderRadius: 14,
-  display: "grid",
-  placeItems: "center",
-  fontWeight: 1000,
-  letterSpacing: 0.35,
-  color: TEXT_HIGH,
-  border: "1px solid rgba(255,255,255,0.14)",
-  background: "linear-gradient(135deg, rgba(255,255,255,0.06), rgba(70,129,244,0.18))",
-  overflow: "hidden",
-};
-
-const accountName: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 950,
-  letterSpacing: 0.12,
-  color: TEXT_HIGH,
-  whiteSpace: "nowrap",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-};
-
-const accountHandle: React.CSSProperties = {
-  fontSize: 11,
-  color: TEXT_MID,
-  letterSpacing: 0.12,
-  whiteSpace: "nowrap",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-};
-
-const accountMenuInward: React.CSSProperties = {
-  position: "absolute",
-  right: 0,
-  top: 52,
-  width: 240,
-  borderRadius: 16,
-  border: "1px solid rgba(255,255,255,0.12)",
-  background: "rgba(12,13,16,0.92)",
-  backdropFilter: "blur(14px)",
-  boxShadow: "0 26px 84px rgba(0,0,0,0.70)",
-  overflow: "hidden",
-  zIndex: 80,
-  transform: "translateX(-170px) translateY(-10px)",
-};
-
-const menuItem: React.CSSProperties = {
-  width: "100%",
-  padding: "12px",
-  background: "transparent",
-  border: "none",
-  color: TEXT_HIGH,
-  textAlign: "left",
-  cursor: "pointer",
-  fontWeight: 900,
-  letterSpacing: 0.12,
-};
-
-const menuDivider: React.CSSProperties = {
-  height: 1,
-  background: "rgba(255,255,255,0.08)",
-};
-
-// ✅ Post menu styles
 const postMenu: React.CSSProperties = {
   position: "absolute",
   right: 0,
@@ -1872,4 +2797,67 @@ const postMenuMuted: React.CSSProperties = {
   padding: "12px",
   fontSize: 12,
   color: TEXT_MID,
+};
+
+const statRow: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "10px 12px",
+  borderRadius: 14,
+  border: "1px solid rgba(255,255,255,0.10)",
+  background: "rgba(255,255,255,0.02)",
+};
+
+const statNum: React.CSSProperties = {
+  fontWeight: 1000,
+  color: TEXT_HIGH,
+  letterSpacing: 0.2,
+};
+
+const toastWrap: React.CSSProperties = {
+  position: "fixed",
+  right: 18,
+  top: 92,
+  zIndex: 200,
+  display: "grid",
+  gap: 10,
+  width: 280,
+  pointerEvents: "none",
+};
+
+const toastCard: React.CSSProperties = {
+  pointerEvents: "none",
+  borderRadius: 16,
+  border: "1px solid rgba(255,255,255,0.12)",
+  padding: "12px 12px",
+  boxShadow: "0 22px 60px rgba(0,0,0,0.60)",
+  backdropFilter: "blur(14px)",
+};
+
+const lightboxBackdrop: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 210,
+  background: "rgba(0,0,0,0.62)",
+  backdropFilter: "blur(8px)",
+  display: "grid",
+  placeItems: "center",
+  padding: 20,
+};
+
+const lightboxCard: React.CSSProperties = {
+  width: "min(980px, 94vw)",
+  borderRadius: 18,
+  border: "1px solid rgba(255,255,255,0.12)",
+  background: "rgba(12,13,16,0.92)",
+  boxShadow: "0 26px 90px rgba(0,0,0,0.72)",
+  padding: 14,
+};
+
+const commentCard: React.CSSProperties = {
+  borderRadius: 16,
+  border: "1px solid rgba(255,255,255,0.10)",
+  background: "rgba(255,255,255,0.02)",
+  padding: 12,
 };
