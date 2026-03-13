@@ -733,7 +733,9 @@ export default function DashboardPage() {
         }
       }
 
-      if (!finalResponse?.ok) {
+      const responseOk = Boolean((finalResponse as Response | null)?.ok);
+
+if (!responseOk) {
         if (/tag/i.test(lastBackendError)) {
           toast({
             type: "error",
