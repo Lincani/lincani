@@ -1,8 +1,7 @@
 import { Heart, MessageCircle, Share2, MoreHorizontal } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
-import { Badge } from './ui/badge';
 
 interface FeedPostProps {
   author: {
@@ -49,10 +48,10 @@ export function FeedPost({ author, content, image, timeAgo, likes, comments, bre
                 </div>
               )}
               {breed && (
-                <Badge variant="outline" className="h-4 px-1.5 text-[10px] border-white/10 text-gray-400">
-                  {breed}
-                </Badge>
-              )}
+  <span className="inline-flex h-4 items-center rounded border border-white/10 px-1.5 text-[10px] text-gray-400">
+    {breed}
+  </span>
+)}
             </div>
             <p className="text-xs text-gray-500">@{author.username} · {timeAgo}</p>
           </div>

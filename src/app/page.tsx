@@ -1634,15 +1634,13 @@ function ParticleBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const canvasEl = canvasRef.current;
-    if (!canvasEl) return;
-
-    const context = canvasEl.getContext("2d");
-    if (!context) return;
+    const canvas = canvasRef.current!;
+    const context = canvas.getContext("2d")!;
+    let raf = 0;
 
     const resizeCanvas = () => {
-      canvasEl.width = window.innerWidth;
-      canvasEl.height = window.innerHeight;
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
     };
 
     resizeCanvas();
@@ -1657,8 +1655,8 @@ function ParticleBackground() {
       opacity: number;
 
       constructor() {
-        this.x = Math.random() * canvasEl.width;
-        this.y = Math.random() * canvasEl.height;
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
         this.size = Math.random() * 2 + 0.5;
         this.speedX = Math.random() * 0.5 - 0.25;
         this.speedY = Math.random() * 0.5 - 0.25;
@@ -1669,10 +1667,10 @@ function ParticleBackground() {
         this.x += this.speedX;
         this.y += this.speedY;
 
-        if (this.x > canvasEl.width) this.x = 0;
-        if (this.x < 0) this.x = canvasEl.width;
-        if (this.y > canvasEl.height) this.y = 0;
-        if (this.y < 0) this.y = canvasEl.height;
+        if (this.x > canvas.width) this.x = 0;
+        if (this.x < 0) this.x = canvas.width;
+        if (this.y > canvas.height) this.y = 0;
+        if (this.y < 0) this.y = canvas.height;
       }
 
       draw() {
@@ -1683,17 +1681,10 @@ function ParticleBackground() {
       }
     }
 
-    const particles: Particle[] = [];
-    const particleCount = 40;
-
-    for (let i = 0; i < particleCount; i++) {
-      particles.push(new Particle());
-    }
-
-    let raf = 0;
+    const particles = Array.from({ length: 40 }, () => new Particle());
 
     const animate = () => {
-      context.clearRect(0, 0, canvasEl.width, canvasEl.height);
+      context.clearRect(0, 0, canvas.width, canvas.height);
 
       particles.forEach((particle) => {
         particle.update();

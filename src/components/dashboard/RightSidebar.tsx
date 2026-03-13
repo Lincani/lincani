@@ -1,8 +1,7 @@
 import { TrendingUp, ArrowUpRight, CheckCircle2 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Button } from './ui/button';
-import { Progress } from './ui/progress';
 
 const suggestedBreeders = [
   {
@@ -55,7 +54,9 @@ export function RightSidebar() {
             <h3 className="text-sm font-semibold text-white">Verification</h3>
             <span className="text-xs text-gray-400">65%</span>
           </div>
-          <Progress value={65} className="h-1.5 mb-3" />
+          <div className="h-1.5 w-full bg-white/10 rounded-full mb-3 overflow-hidden">
+  <div className="h-full bg-white rounded-full" style={{ width: "65%" }} />
+</div>
           <p className="text-xs text-gray-400 mb-3">Complete verification to unlock premium features</p>
           <Button
             size="sm"

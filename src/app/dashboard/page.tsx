@@ -735,7 +735,7 @@ export default function DashboardPage() {
 
       const responseOk = Boolean((finalResponse as Response | null)?.ok);
 
-if (!responseOk) {
+      if (!responseOk) {
         if (/tag/i.test(lastBackendError)) {
           toast({
             type: "error",
@@ -888,7 +888,7 @@ if (!responseOk) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-      useEffect(() => {
+  useEffect(() => {
     function handleClickAway() {
       setOpenPostMenuId(null);
     }
@@ -1175,7 +1175,6 @@ if (!responseOk) {
                         onToggleComments={() => toggleCommentsOpen(id)}
                         onAddComment={() => addComment(id)}
                         onToggleCommentLike={(commentId) => toggleCommentLike(id, commentId)}
-                        onDelete={deletePost}
                         onLike={() => toggleLike(id)}
                         onSave={() => toggleSave(id)}
                         onShare={() => sharePost(p)}
@@ -1261,6 +1260,7 @@ if (!responseOk) {
 
             <div style={{ display: "flex", gap: 10 }}>
               <button
+                type="button"
                 onClick={() => setDeletePostId(null)}
                 style={{
                   flex: 1,
@@ -1276,6 +1276,7 @@ if (!responseOk) {
               </button>
 
               <button
+                type="button"
                 onClick={() => deletePost(deletePostId)}
                 style={{
                   flex: 1,
@@ -1347,17 +1348,18 @@ function TopBar({
             <Home size={15} color="#f5f7ff" />
           </button>
 
-          <button style={iconBtn} aria-label="Messages">
+          <button type="button" style={iconBtn} aria-label="Messages">
             <MessageCircle size={14} color="rgba(223,223,223,0.92)" />
             <span style={orangeDot} />
           </button>
 
-          <button style={iconBtn} aria-label="Notifications">
+          <button type="button" style={iconBtn} aria-label="Notifications">
             <Bell size={14} color="rgba(223,223,223,0.92)" />
             <span style={orangeDot} />
           </button>
 
           <button
+            type="button"
             onClick={() => router.push("/profile")}
             style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer" }}
           >
@@ -1409,6 +1411,7 @@ function LeftNav({
           return (
             <motion.button
               key={item.label}
+              type="button"
               whileHover={{ x: 2 }}
               whileTap={{ scale: 0.985 }}
               style={navRow(isActive, hoveredKey === item.key)}
@@ -1540,6 +1543,7 @@ function ComposerCard({
         </div>
 
         <motion.button
+          type="button"
           whileHover={{ y: -1 }}
           whileTap={{ scale: 0.985 }}
           style={{
@@ -1572,7 +1576,6 @@ function FeedPostCard({
   onToggleComments,
   onAddComment,
   onToggleCommentLike,
-  onDelete,
   onLike,
   onSave,
   onShare,
@@ -1595,7 +1598,6 @@ function FeedPostCard({
   onToggleComments: () => void;
   onAddComment: () => void;
   onToggleCommentLike: (commentId: string) => void;
-  onDelete: (postId: string) => void;
   onLike: () => void;
   onSave: () => void;
   onShare: () => void;
@@ -1642,8 +1644,9 @@ function FeedPostCard({
           </div>
         </div>
 
-                <div style={{ position: "relative" }}>
+        <div style={{ position: "relative" }}>
           <button
+            type="button"
             style={menuButton}
             onClick={(e) => {
               e.stopPropagation();
@@ -1670,16 +1673,17 @@ function FeedPostCard({
               }}
             >
               <button
+                type="button"
                 style={profileMenuButton}
                 onClick={() => {
                   onToggleMenu();
                 }}
               >
-                ✏️ Edit Post
+                Edit Post
               </button>
 
               {canDelete ? (
-                <button style={profileMenuButton} onClick={onRequestDelete}>
+                <button type="button" style={profileMenuButton} onClick={onRequestDelete}>
                   🗑 Delete Post
                 </button>
               ) : (
@@ -1715,22 +1719,22 @@ function FeedPostCard({
       ) : null}
 
       <div style={postActions}>
-        <button style={actionBtn} onClick={onLike}>
+        <button type="button" style={actionBtn} onClick={onLike}>
           <span style={{ color: liked ? "#ff9b9b" : "rgba(197,197,197,0.9)" }}>♥</span>
           <span>{liked ? "Liked" : "Like"}</span>
         </button>
 
-        <button style={actionBtn} onClick={onToggleComments}>
+        <button type="button" style={actionBtn} onClick={onToggleComments}>
           <MessageCircle size={15} />
           <span>{commentsList.length}</span>
         </button>
 
-        <button style={actionBtn} onClick={onShare}>
+        <button type="button" style={actionBtn} onClick={onShare}>
           <span>↗</span>
           <span>{sharesCount}</span>
         </button>
 
-        <button style={actionBtn} onClick={onSave}>
+        <button type="button" style={actionBtn} onClick={onSave}>
           <span>{saved ? "★" : "☆"}</span>
           <span>{saved ? "Saved" : "Save"}</span>
         </button>
@@ -1753,6 +1757,7 @@ function FeedPostCard({
                       <div style={commentTop}>
                         <span style={commentAuthor}>{c.author}</span>
                         <button
+                          type="button"
                           style={commentLikeBtn(likedState)}
                           onClick={() => onToggleCommentLike(c.id)}
                         >
@@ -1777,7 +1782,7 @@ function FeedPostCard({
                 placeholder="Add a comment..."
                 style={commentInput}
               />
-              <button style={postButtonSmall} onClick={onAddComment}>
+              <button type="button" style={postButtonSmall} onClick={onAddComment}>
                 Post
               </button>
             </div>
@@ -1854,7 +1859,7 @@ function RightRail({
           Premium breeder profile connected to your live dashboard logic.
         </div>
 
-        <button style={networkBtn} onClick={onGoNetwork}>
+        <button type="button" style={networkBtn} onClick={onGoNetwork}>
           Open Network
         </button>
       </div>
@@ -1880,7 +1885,7 @@ function SuggestRow({
         </div>
         <div style={suggestHandle}>{handle}</div>
       </div>
-      <button style={followBtn}>Follow</button>
+      <button type="button" style={followBtn}>Follow</button>
     </div>
   );
 }
@@ -2001,7 +2006,7 @@ function Lightbox({
       >
         <div style={lightboxHeader}>
           <div style={lightboxTitle}>{title || "Media"}</div>
-          <button style={menuButton} onClick={onClose}>
+          <button type="button" style={menuButton} onClick={onClose}>
             ✕
           </button>
         </div>
@@ -2515,28 +2520,6 @@ const menuButton: React.CSSProperties = {
   display: "grid",
   placeItems: "center",
   cursor: "pointer",
-};
-
-const menuCard: React.CSSProperties = {
-  position: "absolute",
-  top: 36,
-  right: 0,
-  minWidth: 160,
-  borderRadius: 11,
-  border: "1px solid rgba(255,255,255,0.08)",
-  background: "rgba(26,26,26,0.98)",
-  overflow: "hidden",
-  zIndex: 10,
-};
-
-const deleteBtn: React.CSSProperties = {
-  width: "100%",
-  height: 54,
-  border: "none",
-  background: "transparent",
-  color: "#f8b4b4",
-  cursor: "pointer",
-  fontSize: 12.5,
 };
 
 const menuMuted: React.CSSProperties = {
