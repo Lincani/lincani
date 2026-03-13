@@ -888,7 +888,7 @@ if (!responseOk) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-    useEffect(() => {
+      useEffect(() => {
     function handleClickAway() {
       setOpenPostMenuId(null);
     }
@@ -1642,33 +1642,33 @@ function FeedPostCard({
           </div>
         </div>
 
-        <div style={{ position: "relative" }}>
+                <div style={{ position: "relative" }}>
           <button
-  style={menuButton}
-  onClick={(e) => {
-    e.stopPropagation();
-    onToggleMenu();
-  }}
->
+            style={menuButton}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMenu();
+            }}
+          >
             <MoreHorizontal size={16} />
           </button>
 
           {menuOpen ? (
             <div
-  onClick={(e) => e.stopPropagation()}
-  style={{
-    position: "absolute",
-    right: 0,
-    top: 36,
-    background: "#0f1117",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 10,
-    overflow: "hidden",
-    boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
-    zIndex: 10,
-    minWidth: 160,
-  }}
->
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "absolute",
+                right: 0,
+                top: 36,
+                background: "#0f1117",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 10,
+                overflow: "hidden",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+                zIndex: 10,
+                minWidth: 160,
+              }}
+            >
               <button
                 style={profileMenuButton}
                 onClick={() => {
