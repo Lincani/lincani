@@ -76,7 +76,25 @@ function normalizeUploadsUrl(input) {
 }
 
 function allowedTagsSet() {
-  return new Set(["Litter Update", "Stud Available", "Looking for match", "Health Test Results", "Advice"]);
+  return new Set([
+    "Announcement",
+    "Litter Update",
+    "Program Update",
+    "Breeding Advice",
+    "Health Testing",
+    "Stud Available",
+    "Looking for Match",
+    "Mentorship",
+    "Success Story",
+    "Question",
+    "Event / Meetup",
+    "Resources",
+
+    // optional legacy aliases so older clients still work
+    "Looking for match",
+    "Health Test Results",
+    "Advice",
+  ]);
 }
 
 // ✅ POST /posts/upload (PREMIUM: upload ONE file first)
@@ -177,11 +195,22 @@ function handleCreatePost(req, res) {
     const userId = Number(req.user.id);
 
     const text = String(req.body?.text || "").trim();
-    const tag = String(req.body?.tag || "").trim();
+let tag = String(req.body?.tag || "Announcement").trim();
 
-    const allowedTags = allowedTagsSet();
-    if (!text) return res.status(400).json({ error: "Text is required" });
-    if (!allowedTags.has(tag)) return res.status(400).json({ error: "Invalid tag" });
+const allowedTags = allowedTagsSet();
+if (!text) return res.status(400).json({ error: "Text is required" });
+
+// default tag if frontend sends nothing
+if (!tag) tag = "Announcement";
+
+// normalize a few legacy values
+if (tag === "Looking for match") tag = "Looking for Match";
+if (tag === "Health Test Results") tag = "Health Testing";
+if (tag === "Advice") tag = "Breeding Advice";
+
+if (!allowedTags.has(tag)) {
+  return res.status(400).json({ error: "Invalid tag" });
+}
 
     const createdAt = Date.now();
 
