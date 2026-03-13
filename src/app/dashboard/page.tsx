@@ -888,18 +888,15 @@ if (!responseOk) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  useEffect(() => {
+    useEffect(() => {
     function handleClickAway() {
       setOpenPostMenuId(null);
     }
 
-    if (openPostMenuId) {
-      document.addEventListener("click", handleClickAway);
-    }
+    if (!openPostMenuId) return;
 
-    return () => {
-      document.removeEventListener("click", handleClickAway);
-    };
+    document.addEventListener("click", handleClickAway);
+    return () => document.removeEventListener("click", handleClickAway);
   }, [openPostMenuId]);
 
   const seededPosts: Post[] = posts.length ? posts : (demoPosts as unknown as Post[]);
@@ -1646,25 +1643,32 @@ function FeedPostCard({
         </div>
 
         <div style={{ position: "relative" }}>
-          <button style={menuButton} onClick={onToggleMenu}>
+          <button
+  style={menuButton}
+  onClick={(e) => {
+    e.stopPropagation();
+    onToggleMenu();
+  }}
+>
             <MoreHorizontal size={16} />
           </button>
 
           {menuOpen ? (
             <div
-              style={{
-                position: "absolute",
-                right: 0,
-                top: 36,
-                background: "#0f1117",
-                border: "1px solid rgba(255,255,255,0.08)",
-                borderRadius: 10,
-                overflow: "hidden",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
-                zIndex: 10,
-                minWidth: 160,
-              }}
-            >
+  onClick={(e) => e.stopPropagation()}
+  style={{
+    position: "absolute",
+    right: 0,
+    top: 36,
+    background: "#0f1117",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 10,
+    overflow: "hidden",
+    boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+    zIndex: 10,
+    minWidth: 160,
+  }}
+>
               <button
                 style={profileMenuButton}
                 onClick={() => {
